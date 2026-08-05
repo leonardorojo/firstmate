@@ -71,6 +71,14 @@ A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herd
 A zellij task additionally records `zellij_session=`, `zellij_tab_id=`, and `zellij_pane_id=`.
 An Orca task additionally records `orca_worktree_id=` and `terminal=`, with `window=fm-<id>` kept as the shared firstmate alias.
 A cmux task additionally records `cmux_workspace_id=` and `cmux_surface_id=`.
+A ship or scout task also records the canonical `worktree_wsl=`, the optional round-trip-validated `worktree_windows=`, `worktree_common_dir=`, and the distinct `spawn_head_sha=`, `current_head_sha=`, and teardown-time `final_head_sha=` identities.
+The forge's optional `pr_head=` remains a separate pull-request identity and is never used as the task-root SHA.
+The launch command changes into the canonical WSL root and verifies its Git top-level and common directory before starting the worker.
+Teardown repeats the same repository-registration and root-identity proof and preserves the task records when the root is missing, unrelated, ambiguous, or changed.
+The only compatibility exception is an explicit `--force` retirement of legacy metadata whose worktree is already absent, which removes records without claiming that the root was validated.
+A spawn that cannot complete that proof leaves `state/<id>.spawn-failed` and the acquired-root evidence for recovery instead of guessing a replacement checkout.
+When the acquired root is under `/mnt/<drive>/`, `wslpath -w` must produce a Windows path that round-trips to the exact WSL root; conversion failure stops the worker before launch.
+Native-Linux roots do not require `wslpath`, and legacy metadata without the new fields remains accepted only when the current registered-worktree proof succeeds.
 Task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` resolve centrally through `fm_backend_resolve_selector`.
 A selector containing `:` is passed through as an explicit backend endpoint escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that themselves start with `fm-` route to their own metadata instead of being stripped.

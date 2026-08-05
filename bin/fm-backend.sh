@@ -7,7 +7,7 @@
 # abstraction"). P1 extracted the tmux command sequences that fm-send.sh,
 # fm-peek.sh, fm-watch.sh, fm-spawn.sh, and fm-teardown.sh already ran inline
 # into bin/backends/tmux.sh, with those SAME command sequences, so the default
-# (tmux) path stays byte-identical. P2 adds bin/backends/herdr.sh, an
+# (tmux) endpoint path stays compatible. P2 adds bin/backends/herdr.sh, an
 # EXPERIMENTAL spawn-capable backend behind `--backend herdr`/`FM_BACKEND=herdr`/
 # `config/backend`, and behind runtime auto-detection when firstmate itself is
 # running inside herdr with no explicit backend setting; see herdr-addendum.md and
@@ -31,10 +31,10 @@
 #
 # Compatibility contract: a task's meta may omit `backend=`; every reader here
 # treats that as `tmux` (fm_backend_of_meta), and fm-spawn.sh does not write
-# `backend=tmux` for a default-backend task, so existing and newly spawned
-# default-path metas stay byte-identical. Only a task spawned on a non-tmux
+# `backend=tmux` for a default-backend task. Only a task spawned on a non-tmux
 # spawn-capable backend, currently experimental herdr, zellij, orca, or cmux,
-# carries an explicit `backend=` line.
+# carries an explicit `backend=` line; root identity fields are independent of
+# this backend compatibility rule.
 #
 # Event-source framing (herdr-addendum "Events as the core abstraction"): a
 # backend's supervision surface is conceptually an EVENT SOURCE - it produces
@@ -412,6 +412,23 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
     echo "REFUSED: task $id has malformed endpoint metadata; preserving task state." >&2
     return 1
   esac
+  local optional_key optional_count optional_value
+  for optional_key in worktree_wsl worktree_windows worktree_common_dir project_wsl project_windows spawn_head_sha current_head_sha final_head_sha; do
+    optional_count=$(grep -c "^$optional_key=" "$meta" 2>/dev/null || true)
+    [ "$optional_count" -le 1 ] || {
+      echo "REFUSED: task $id has an ambiguous $optional_key identity; preserving task state." >&2
+      return 1
+    }
+    if [ "$optional_count" -eq 1 ]; then
+      optional_value=$(grep "^$optional_key=" "$meta" | cut -d= -f2-)
+      case "$optional_value" in
+        *$'\n'*|*$'\r'*|*$'\t'*)
+          echo "REFUSED: task $id has malformed $optional_key identity; preserving task state." >&2
+          return 1
+          ;;
+      esac
+    fi
+  done
   backend_count=$(grep -c '^backend=' "$meta" 2>/dev/null || true)
   case "$backend_count" in
     0) backend=tmux ;;

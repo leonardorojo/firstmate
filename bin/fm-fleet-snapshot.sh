@@ -29,6 +29,8 @@
 #     fm-classify-lib.sh's authoritative status_open_decisions fold and reconciled
 #     against current_state; hints.pending_decision and hints.blocked_event are
 #     booleans derived from that set.
+#     task_root carries the canonical task-root paths and distinct spawn/current/final SHA identities; legacy tasks leave unavailable fields null.
+#     pr.head_sha is the forge-provided PR head and is separate from task_root SHA fields.
 #     endpoint.exists is the cheap backend endpoint-presence read.
 #     endpoint.agent_alive is populated for secondmates only, where it is useful
 #     return-channel supervision data; other tasks use "not_checked".
@@ -128,6 +130,8 @@ validate_positive_bound FM_SNAPSHOT_REGISTRY_TIMEOUT "$FM_SNAPSHOT_REGISTRY_TIME
 # shellcheck source=bin/fm-backend.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-worktree-lib.sh
+. "$SCRIPT_DIR/fm-worktree-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-classify-lib.sh"
@@ -403,7 +407,8 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
 task_json_lines() {
   local meta id kind harness mode yolo project worktree home projects backend target status_log report_path
   local remote_host remote_root remote_state remote_rc remote_home_present
-  local pr pr_source event_json current_json endpoint_exists agent_alive meta_json status_json report_json worktree_json home_json
+  local worktree_wsl worktree_windows worktree_common spawn_head_sha current_head_sha final_head_sha
+  local pr pr_head_sha pr_source event_json current_json endpoint_exists agent_alive meta_json status_json report_json worktree_json home_json
   local last_event_raw current_state current_source pending_decision blocked_event report_present=0 pr_from_status
   local open_decisions_tsv open_decisions_json
 
@@ -417,6 +422,16 @@ task_json_lines() {
     yolo=$(meta_value "$meta" yolo)
     project=$(meta_value "$meta" project)
     worktree=$(meta_value "$meta" worktree)
+    worktree_wsl=$(meta_value "$meta" worktree_wsl)
+    worktree_windows=$(meta_value "$meta" worktree_windows)
+    worktree_common=$(meta_value "$meta" worktree_common_dir)
+    spawn_head_sha=$(meta_value "$meta" spawn_head_sha)
+    final_head_sha=$(meta_value "$meta" final_head_sha)
+    current_head_sha=$(meta_value "$meta" current_head_sha)
+    if [ -n "$worktree" ] && [ -d "$worktree" ] \
+       && { [ -n "$worktree_wsl" ] || [ -n "$spawn_head_sha" ] || [ -n "$current_head_sha" ]; }; then
+      current_head_sha=$(fm_worktree_sha "$worktree" 2>/dev/null || printf '%s' "$current_head_sha")
+    fi
     home=$(meta_value "$meta" home)
     projects=$(meta_value "$meta" projects)
     remote_host=$(meta_value "$meta" remote_host)
@@ -433,6 +448,7 @@ task_json_lines() {
     status_log="$STATE/$id.status"
     report_path="$DATA/$id/report.md"
     pr=$(meta_value "$meta" pr)
+    pr_head_sha=$(meta_value "$meta" pr_head)
     pr_source=meta
     if [ -z "$pr" ]; then
       pr_from_status=$(first_pr_url_in_file "$status_log" || true)
@@ -536,6 +552,12 @@ task_json_lines() {
       --arg yolo "$yolo" \
       --arg project "$project" \
       --arg worktree "$worktree" \
+      --arg task_root_wsl "$worktree_wsl" \
+      --arg task_root_windows "$worktree_windows" \
+      --arg task_root_common "$worktree_common" \
+      --arg spawn_head_sha "$spawn_head_sha" \
+      --arg current_head_sha "$current_head_sha" \
+      --arg final_head_sha "$final_head_sha" \
       --arg home "$home" \
       --arg projects "$projects" \
       --arg backend "$backend" \
@@ -543,6 +565,7 @@ task_json_lines() {
       --arg remote_host "$remote_host" \
       --arg remote_root "$remote_root" \
       --arg pr "$pr" \
+      --arg pr_head_sha "$pr_head_sha" \
       --arg pr_source "$pr_source" \
       --arg agent_alive "$agent_alive" \
       --arg observed_at "$SNAPSHOT_NOW" \
@@ -574,6 +597,14 @@ task_json_lines() {
           home:$home_path,
           report:$report
         },
+        task_root:{
+          wsl:($task_root_wsl | if . == "" then null else . end),
+          windows:($task_root_windows | if . == "" then null else . end),
+          common_dir:($task_root_common | if . == "" then null else . end),
+          spawn_head_sha:($spawn_head_sha | if . == "" then null else . end),
+          current_head_sha:($current_head_sha | if . == "" then null else . end),
+          final_head_sha:($final_head_sha | if . == "" then null else . end)
+        },
         secondmate_projects:($projects | if . == "" then [] else split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) | map(select(. != "")) end),
         current_state:($current_state + {observed_at:$observed_at,freshness:"fresh"}),
         endpoint:{target:($target | if . == "" then null else . end),exists:$endpoint_exists,agent_alive:$agent_alive,
@@ -581,7 +612,7 @@ task_json_lines() {
                   elif $agent_alive == "alive" or $agent_alive == "dead" then $agent_alive
                   else "unknown" end),
           observed_at:$observed_at,freshness:"fresh"},
-        pr:{url:($pr | if . == "" then null else . end),source:$pr_source},
+        pr:{url:($pr | if . == "" then null else . end),head_sha:($pr_head_sha | if . == "" then null else . end),source:$pr_source},
         hints:{
           pending_decision:$pending_decision,
           blocked_event:$blocked_event,

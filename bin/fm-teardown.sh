@@ -136,6 +136,8 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-worktree-lib.sh
+. "$SCRIPT_DIR/fm-worktree-lib.sh"
 # shellcheck source=bin/fm-lock-lib.sh
 . "$SCRIPT_DIR/fm-lock-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
@@ -395,11 +397,63 @@ if [ -z "$BUSY_GEN" ]; then
 fi
 ORCA_WORKTREE_ID=$(fm_meta_get "$META" orca_worktree_id)
 ORCA_PATH_MATCH_VERIFIED=0
+FINAL_HEAD_SHA=
 
 KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 [ -n "$MODE" ] || MODE=no-mistakes
+
+# Revalidate the exact acquired root before any process, branch, endpoint, or
+# Treehouse cleanup. New metadata binds the physical root and repository common
+# directory; legacy metadata is accepted only after the same current repository
+# registration proof succeeds and never receives an inferred Windows path.
+TEARDOWN_WORKTREE_WINDOWS=
+legacy_missing_force_root=0
+if [ "$KIND" != secondmate ]; then
+  if [ "$FORCE" = --force ] && [ ! -e "$WT" ] \
+     && [ -z "$(fm_worktree_meta_optional_exact "$META" worktree_wsl)" ] \
+     && [ -z "$(fm_worktree_meta_optional_exact "$META" worktree_common_dir)" ]; then
+    legacy_missing_force_root=1
+    echo "warning: legacy task $ID has no current worktree to validate; --force will retire only its durable records" >&2
+  fi
+  if [ "$legacy_missing_force_root" = 0 ]; then
+    fm_worktree_validate_meta_identity "$META" "$ID" || {
+    echo "REFUSED: task $ID worktree identity is missing, ambiguous, or changed; preserving the task records." >&2
+    exit 1
+  }
+  WT=$FM_WORKTREE_META_WSL
+  fm_worktree_validate_pair "$PROJ" "$WT" || {
+    echo "REFUSED: task $ID acquired root is no longer the registered worktree (reason: ${FM_WORKTREE_PATH_ERROR:-ambiguous path}); preserving the task records." >&2
+    exit 1
+  }
+  recorded_windows=$(fm_worktree_meta_optional_exact "$META" worktree_windows) || {
+    echo "REFUSED: task $ID Windows worktree identity is ambiguous; preserving the task records." >&2
+    exit 1
+  }
+  if [ -n "$recorded_windows" ] && [ "$recorded_windows" != "$FM_WORKTREE_WINDOWS" ]; then
+    echo "REFUSED: task $ID Windows worktree identity changed; preserving the task records." >&2
+    exit 1
+  fi
+  recorded_project_wsl=$(fm_worktree_meta_optional_exact "$META" project_wsl) || {
+    echo "REFUSED: task $ID project-root identity is ambiguous; preserving the task records." >&2
+    exit 1
+  }
+  if [ -n "$recorded_project_wsl" ] && [ "$recorded_project_wsl" != "$FM_WORKTREE_PRIMARY_WSL" ]; then
+    echo "REFUSED: task $ID primary project identity changed; preserving the task records." >&2
+    exit 1
+  fi
+  recorded_project_windows=$(fm_worktree_meta_optional_exact "$META" project_windows) || {
+    echo "REFUSED: task $ID Windows project identity is ambiguous; preserving the task records." >&2
+    exit 1
+  }
+  if [ -n "$recorded_project_windows" ] && [ "$recorded_project_windows" != "$FM_WORKTREE_PRIMARY_WINDOWS" ]; then
+    echo "REFUSED: task $ID Windows project identity changed; preserving the task records." >&2
+    exit 1
+  fi
+  TEARDOWN_WORKTREE_WINDOWS=$FM_WORKTREE_WINDOWS
+  fi
+fi
 PUBLIC_FOLLOWUP_HOME=$FM_HOME
 PUBLIC_FOLLOWUP_STATE=$STATE
 PUBLIC_FOLLOWUP_WORK_HOME=main
@@ -2219,6 +2273,32 @@ if [ "$BACKEND" = herdr ]; then
   TEARDOWN_HERDR_PANE=$FM_BACKEND_HERDR_PANE
 fi
 
+record_final_worktree_snapshot() {
+  local sha=$1 tmp current_seen final_seen
+  tmp="$META.tmp.$$"
+  awk -v sha="$sha" '
+    /^current_head_sha=/ { print "current_head_sha=" sha; current_seen=1; next }
+    /^final_head_sha=/ { print "final_head_sha=" sha; final_seen=1; next }
+    { print }
+    END {
+      if (!current_seen) print "current_head_sha=" sha
+      if (!final_seen) print "final_head_sha=" sha
+    }
+  ' "$META" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  mv -f -- "$tmp" "$META"
+}
+
+if [ "$KIND" != secondmate ] && [ "$legacy_missing_force_root" = 0 ]; then
+  FINAL_HEAD_SHA=$(fm_worktree_sha "$WT") || {
+    echo "REFUSED: task $ID final worktree SHA could not be read; preserving the task records." >&2
+    exit 1
+  }
+  record_final_worktree_snapshot "$FINAL_HEAD_SHA" || {
+    echo "REFUSED: task $ID final root/SHA evidence could not be recorded; preserving the task records." >&2
+    exit 1
+  }
+fi
+
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
 if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
   if [ "$ORCA_PATH_MATCH_VERIFIED" != 1 ]; then
@@ -2350,6 +2430,7 @@ fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
 rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
+  "$STATE/$ID.launch-authorized" "$STATE/$ID.worktree-acquired" "$STATE/$ID.spawn-failed" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.grok-turnend-token" \
   "$STATE/$ID.kimi-turnend-token" "$STATE/$ID.muse-session" \
   "$STATE/$ID.muse-session-current" \
@@ -2357,5 +2438,5 @@ rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi
-echo "teardown $ID complete (window $T, worktree $WT)"
+echo "teardown $ID complete (window $T, worktree $WT, worktree_sha ${FINAL_HEAD_SHA:-unknown})"
 backlog_refresh_reminder

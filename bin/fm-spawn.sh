@@ -139,7 +139,11 @@
 # muse installs no hook at all - its plugin engine is off in the default build - so
 # it writes state/<id>.muse-session to bind the pane to muse's own session event
 # log; muse is crewmate/scout only and is refused for --secondmate.
-# On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> [mode=<mode> yolo=<on|off>] window=<backend-target> worktree=<path>
+# On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> [mode=<mode> yolo=<on|off>] window=<backend-target> worktree=<path> [worktree_windows=<path>] worktree_sha=<sha>
+# New task metadata retains legacy worktree/project fields and adds the canonical
+# WSL task-root, optional Windows task-root, repository-common-dir, and distinct
+# spawn/current/final SHA identities. A rejected or ambiguous acquired root leaves
+# state/<id>.spawn-failed and any acquisition evidence intact for reconciliation.
 # A ship task records the explicit mode/yolo it was passed; a secondmate spawn records
 # mode=secondmate, yolo=off, home=, and projects=; a scout records neither, and both the
 # success line and state/<id>.meta omit them.
@@ -215,6 +219,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-trace-context-lib.sh
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
+# shellcheck source=bin/fm-worktree-lib.sh
+. "$SCRIPT_DIR/fm-worktree-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
@@ -598,7 +604,7 @@ fi
 # non-spawn-capable backends. The resolved value is
 # recorded in meta only when it is NOT tmux (fm-teardown.sh and fm-watch.sh's
 # window_backend/fm_backend_of_meta already treat an absent backend= as tmux),
-# so the default path's meta stays byte-identical.
+# while the task-root identity fields remain present on every new task.
 if [ "$BACKEND_SET" -eq 1 ]; then
   BACKEND=$BACKEND_ARG
 else
@@ -620,6 +626,10 @@ fi
 ORCA_ABORT_CLEANUP=0
 ORCA_WORKTREE_ID=
 ORCA_TERMINAL=
+WT_COMMON=
+WT_WINDOWS=
+PROJECT_WINDOWS=
+TASK_ROOT_SHA=
 HERDR_PROJECTION_ABORT_CLEANUP=0
 HERDR_PROJECTION_ABORT_SESSION=
 HERDR_PROJECTION_ABORT_TASK_PANE=
@@ -630,6 +640,26 @@ SPAWN_TASK_LOCK=
 SPAWN_TASK_LOCK_HELD=0
 CONFIG_INHERIT_LOCK=
 CONFIG_INHERIT_LOCK_HELD=0
+
+record_spawn_failure() {  # <reason>
+  local reason=$1 tmp
+  mkdir -p "$STATE" 2>/dev/null || true
+  if [ -d "$STATE" ]; then
+    tmp="$STATE/$ID.spawn-failed.tmp.$$"
+    {
+      printf 'task=%s\n' "$ID"
+      printf 'reason=%s\n' "$reason"
+      printf 'project=%s\n' "${PROJ_ABS:-}"
+      printf 'worktree=%s\n' "${WT:-}"
+      printf 'worktree_wsl=%s\n' "${WT:-}"
+      printf 'worktree_windows=%s\n' "${WT_WINDOWS:-}"
+      printf 'worktree_common_dir=%s\n' "${WT_COMMON:-}"
+      printf 'spawn_head_sha=%s\n' "${TASK_ROOT_SHA:-}"
+      printf 'endpoint=%s\n' "${T:-}"
+    } > "$tmp" 2>/dev/null && mv -f -- "$tmp" "$STATE/$ID.spawn-failed" || rm -f -- "$tmp"
+    printf 'failed: %s\n' "$reason" >> "$STATE/$ID.status" 2>/dev/null || true
+  fi
+}
 
 parse_orca_worktree_result() {
   local raw=$1 rest
@@ -681,6 +711,13 @@ spawn_abort_cleanup() {
             echo "window=$W"
             echo "worktree=${WT:-}"
             echo "project=$PROJ_ABS"
+            echo "worktree_wsl=${WT:-}"
+            echo "worktree_windows=${WT_WINDOWS:-}"
+            echo "worktree_common_dir=${WT_COMMON:-}"
+            echo "project_wsl=${PROJ_ABS_REAL:-}"
+            echo "project_windows=${PROJECT_WINDOWS:-}"
+            echo "spawn_head_sha=${TASK_ROOT_SHA:-}"
+            echo "current_head_sha=${TASK_ROOT_SHA:-}"
             echo "harness=$HARNESS"
             echo "kind=$KIND"
             [ -z "${MODE:-}" ] || echo "mode=$MODE"
@@ -783,6 +820,8 @@ if ! fm_lock_try_acquire "$SPAWN_TASK_LOCK"; then
   exit 1
 fi
 SPAWN_TASK_LOCK_HELD=1
+mkdir -p "$STATE"
+STATE_REAL=$(cd "$STATE" && pwd -P)
 PROJ=
 ARG3=
 FIRSTMATE_HOME=
@@ -1396,21 +1435,31 @@ real_path_or_raw() {  # <path>
 # that every downstream operation (send/capture/kill) already treats as opaque
 # per-backend routing (fm_backend_resolve_selector).
 validate_spawn_worktree() {  # <source> <inspect-target>
-  local source=$1 inspect_target=$2 wt_real proj_real wt_top wt_top_real
-  wt_real=
-  if ! wt_real=$(cd "$WT" 2>/dev/null && pwd -P); then
-    wt_real=
+  local source=$1 inspect_target=$2
+  if ! fm_worktree_validate_pair "$PROJ_ABS" "$WT"; then
+    echo "error: $source did not yield an isolated worktree registered by the primary repository (resolved '$WT'; primary '$PROJ_ABS'; reason: ${FM_WORKTREE_PATH_ERROR:-ambiguous path}); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
+    record_spawn_failure "$source rejected the acquired task root: ${FM_WORKTREE_PATH_ERROR:-ambiguous path}"
+    return 1
   fi
-  proj_real=$PROJ_ABS_REAL
-  wt_top=$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null || true)
-  wt_top_real=
-  if ! wt_top_real=$(cd "$wt_top" 2>/dev/null && pwd -P); then
-    wt_top_real=
-  fi
-  if [ -z "$wt_real" ] || [ -z "$wt_top_real" ] || [ "$wt_real" != "$wt_top_real" ] || [ "$wt_real" = "$proj_real" ]; then
-    echo "error: $source did not yield an isolated worktree (resolved '$WT'; worktree root '${wt_top:-none}'; primary '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
-    exit 1
-  fi
+  WT=$FM_WORKTREE_WSL
+  WT_COMMON=$FM_WORKTREE_COMMON
+  WT_WINDOWS=$FM_WORKTREE_WINDOWS
+  PROJECT_WINDOWS=$FM_WORKTREE_PRIMARY_WINDOWS
+  TASK_ROOT_SHA=$(fm_worktree_sha "$WT") || {
+    echo "error: $source yielded a worktree without a readable HEAD; refusing to launch" >&2
+    record_spawn_failure "$source yielded a worktree without a readable HEAD"
+    return 1
+  }
+}
+
+prepare_secondmate_root() {
+  WT=$(fm_worktree_canonical_dir "$WT") || return 1
+  WT_COMMON=$(fm_worktree_common_dir "$WT" 2>/dev/null || true)
+  WT_WINDOWS=
+  PROJECT_WINDOWS=
+  fm_worktree_windows_path "$WT" || return 1
+  WT_WINDOWS=$FM_WORKTREE_WINDOWS_PATH
+  TASK_ROOT_SHA=$(fm_worktree_sha "$WT" 2>/dev/null || true)
 }
 
 herdr_projection_meta_field_exact() {  # <meta> <key>
@@ -1748,6 +1797,36 @@ spawn_current_path() {  # <target>
     cmux) fm_backend_cmux_current_path "$1" "$W" ;;
   esac
 }
+
+verify_spawn_launch_root() {
+  local observed observed_real candidate= count=0 i
+  if [ "$BACKEND" = orca ] || [ "$KIND" = secondmate ]; then
+    return 0
+  fi
+  for i in 1 2 3; do
+    observed=$(spawn_current_path "$WT_TARGET" 2>/dev/null || true)
+    observed_real=$(fm_worktree_canonical_dir "$observed" 2>/dev/null || true)
+    if [ -z "$observed_real" ] || [ "$observed_real" != "$WT" ]; then
+      record_spawn_failure "post-launch endpoint root was '${observed_real:-missing}', expected '$WT'"
+      echo "error: launched worker is not contained by the acquired task root; preserving metadata and refusing to continue" >&2
+      fm_backend_kill "$BACKEND" "$T" "$(grep '^zellij_tab_id=' "$STATE/$ID.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)" "fm-$ID" 2>/dev/null || true
+      return 1
+    fi
+    if [ "$observed_real" = "$candidate" ]; then
+      count=$((count + 1))
+    else
+      candidate=$observed_real
+      count=1
+    fi
+    [ "$count" -ge 2 ] && return 0
+    sleep 0.2
+  done
+  record_spawn_failure "post-launch endpoint root did not settle at '$WT'"
+  echo "error: launched worker root was ambiguous; preserving metadata and refusing to continue" >&2
+  fm_backend_kill "$BACKEND" "$T" "$(grep '^zellij_tab_id=' "$STATE/$ID.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)" "fm-$ID" 2>/dev/null || true
+  return 1
+}
+
 spawn_send_literal() {  # <target> <text>
   case "$BACKEND" in
     tmux) fm_backend_tmux_send_literal "$1" "$2" ;;
@@ -1819,7 +1898,29 @@ kimi_spawn_fail() {  # <detail>
 }
 
 if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
-  spawn_send_text_line "$WT_TARGET" 'treehouse get'
+  if treehouse get --help 2>&1 | grep -Eq '(^|[^[:alnum:]_-])--lease([^[:alnum:]_-]|$)'; then
+    ACQUIRED_ROOT_FILE="$STATE_REAL/$ID.worktree-acquired"
+    rm -f -- "$ACQUIRED_ROOT_FILE"
+    sq_acquired_root_file=$(shell_quote "$ACQUIRED_ROOT_FILE")
+    sq_lease_holder=$(shell_quote "$ID")
+    spawn_send_text_line "$WT_TARGET" "treehouse get --lease --lease-holder $sq_lease_holder > $sq_acquired_root_file"
+    for _ in $(seq 1 60); do
+      if [ -s "$ACQUIRED_ROOT_FILE" ]; then
+        WT=$(sed -n '1p' "$ACQUIRED_ROOT_FILE")
+        if [ -n "$WT" ] && [ -z "$(sed -n '2,$p' "$ACQUIRED_ROOT_FILE" | sed '/^[[:space:]]*$/d')" ]; then
+          break
+        fi
+        WT=
+      fi
+      sleep 1
+    done
+    if [ -z "$WT" ]; then
+      echo "error: treehouse get --lease did not report one acquired worktree within 60s; inspect window $T" >&2
+      record_spawn_failure "treehouse lease did not report one acquired worktree"
+      exit 1
+    fi
+  else
+    spawn_send_text_line "$WT_TARGET" 'treehouse get'
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
   # Target the stable window id, not the name: if the name is ever lost (e.g. an
@@ -1865,7 +1966,16 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     exit 1
   fi
 
+  fi
   validate_spawn_worktree "treehouse get" "$T"
+fi
+
+if [ "$KIND" = secondmate ]; then
+  if ! prepare_secondmate_root; then
+    echo "error: secondmate root could not be canonicalized or converted safely; refusing to launch" >&2
+    record_spawn_failure "secondmate root could not be canonicalized or converted safely"
+    exit 1
+  fi
 fi
 
 # Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't
@@ -1881,7 +1991,6 @@ mkdir -p "$TASK_TMP/gotmp"
 # and token pointers stay out of git's view so they never block teardown's dirty
 # check or leak into a commit.
 mkdir -p "$STATE"
-STATE_REAL=$(cd "$STATE" && pwd -P)
 TURNEND="$STATE_REAL/$ID.turn-ended"
 exclude_path() {
   local rel=$1 EXCL
@@ -2190,6 +2299,13 @@ META_WINDOW=$T
   echo "endpoint_task_id=$ID"
   echo "worktree=$WT"
   echo "project=$PROJ_ABS"
+  echo "worktree_wsl=$WT"
+  echo "worktree_windows=$WT_WINDOWS"
+  echo "worktree_common_dir=$WT_COMMON"
+  echo "project_wsl=$PROJ_ABS_REAL"
+  echo "project_windows=$PROJECT_WINDOWS"
+  echo "spawn_head_sha=$TASK_ROOT_SHA"
+  echo "current_head_sha=$TASK_ROOT_SHA"
   echo "harness=$HARNESS"
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
@@ -2198,10 +2314,9 @@ META_WINDOW=$T
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
-  # Default-off writes no traceparent= line (meta stays byte-identical).
-  # backend= is written only for a non-default (non-tmux) backend, so the
-  # default path's meta stays byte-identical (absent backend= means tmux;
-  # data/fm-backend-design-d7's P1 compatibility contract).
+  # Default-off writes no traceparent= line.
+  # backend= is written only for a non-default (non-tmux) backend, so an absent
+  # backend= still means tmux (data/fm-backend-design-d7's P1 compatibility contract).
   [ "$BACKEND" = tmux ] || echo "backend=$BACKEND"
   if [ "$BACKEND" = herdr ]; then
     echo "herdr_session=$HERDR_SES"
@@ -2245,6 +2360,24 @@ LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
+# The acquired root is an explicit launch boundary, not merely the pane's
+# inherited cwd. The checks run in the endpoint shell before the harness command
+# can execute and export both path spellings without ever feeding the Windows
+# spelling to Git.
+sq_task_root=$(shell_quote "$WT")
+sq_task_common=$(shell_quote "$WT_COMMON")
+sq_project_root=$(shell_quote "$PROJ_ABS_REAL")
+sq_task_windows=$(shell_quote "$WT_WINDOWS")
+sq_project_windows=$(shell_quote "$PROJECT_WINDOWS")
+sq_task_sha=$(shell_quote "$TASK_ROOT_SHA")
+sq_launch_auth=$(shell_quote "$STATE_REAL/$ID.launch-authorized")
+rm -f -- "$STATE_REAL/$ID.launch-authorized"
+HARNESS_LAUNCH=$LAUNCH
+LAUNCH="export FM_TASK_WORKTREE_WSL=$sq_task_root FM_TASK_WORKTREE_WINDOWS=$sq_task_windows FM_TASK_PROJECT_WSL=$sq_project_root FM_TASK_PROJECT_WINDOWS=$sq_project_windows FM_TASK_WORKTREE_SHA=$sq_task_sha; cd -- $sq_task_root && [ \"\$(pwd -P)\" = $sq_task_root ]"
+if [ -n "$WT_COMMON" ] && [ -n "$TASK_ROOT_SHA" ]; then
+  LAUNCH="$LAUNCH && [ \"\$(git rev-parse --show-toplevel)\" = $sq_task_root ] && [ \"\$(git rev-parse --git-common-dir)\" = $sq_task_common ]"
+fi
+LAUNCH="$LAUNCH && touch -- $sq_launch_auth && $HARNESS_LAUNCH"
 # Crewmate panes are created by a long-lived tmux/herdr daemon that does not
 # inherit firstmate's current environment, so a bare `claude` in the pane falls
 # back to the default ~/.claude store even when firstmate itself runs under a
@@ -2299,6 +2432,7 @@ if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   spawn_herdr_presentation_order_lock_release
 fi
 spawn_send_key "$T" Enter
+verify_spawn_launch_root || exit 1
 if [ "$HARNESS" = kimi ]; then
   if ! kimi_wait_for_ready; then
     kimi_spawn_fail "kimi did not show a verified ready signal before brief delivery"
@@ -2335,4 +2469,4 @@ fi
 
 SPAWN_DELIVERY=
 [ -z "$MODE" ] || SPAWN_DELIVERY=" mode=$MODE yolo=$YOLO"
-echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT"
+echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT worktree_windows=${WT_WINDOWS:-} worktree_sha=$TASK_ROOT_SHA"
