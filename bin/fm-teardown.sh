@@ -408,7 +408,6 @@ MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 # Treehouse cleanup. New metadata binds the physical root and repository common
 # directory; legacy metadata is accepted only after the same current repository
 # registration proof succeeds and never receives an inferred Windows path.
-TEARDOWN_WORKTREE_WINDOWS=
 legacy_missing_force_root=0
 if [ "$KIND" != secondmate ]; then
   if [ "$FORCE" = --force ] && [ ! -e "$WT" ] \
@@ -451,7 +450,6 @@ if [ "$KIND" != secondmate ]; then
     echo "REFUSED: task $ID Windows project identity changed; preserving the task records." >&2
     exit 1
   fi
-  TEARDOWN_WORKTREE_WINDOWS=$FM_WORKTREE_WINDOWS
   fi
 fi
 PUBLIC_FOLLOWUP_HOME=$FM_HOME
@@ -2284,7 +2282,7 @@ if [ "$BACKEND" = herdr ]; then
 fi
 
 record_final_worktree_snapshot() {
-  local sha=$1 tmp current_seen final_seen
+  local sha=$1 tmp
   tmp="$META.tmp.$$"
   awk -v sha="$sha" '
     /^current_head_sha=/ { print "current_head_sha=" sha; current_seen=1; next }

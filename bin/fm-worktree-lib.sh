@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Shared task-root identity and WSL path validation for spawn, reporting, and teardown.
+# shellcheck disable=SC2034
+# FM_WORKTREE_* variables are the sourced library's public output interface.
 # The canonical WSL root is the only path accepted by Git, Treehouse, and cleanup.
 
 fm_worktree_canonical_dir() {  # <path>
@@ -79,7 +81,7 @@ fm_worktree_windows_path() {  # <canonical-wsl-path>
 }
 
 fm_worktree_validate_pair() {  # <primary> <task-root>
-  local primary=$1 task_root=$2 primary_common task_common
+  local primary=$1 task_root=$2
   FM_WORKTREE_PRIMARY_WSL=
   FM_WORKTREE_WSL=
   FM_WORKTREE_PRIMARY_COMMON=
@@ -153,7 +155,7 @@ fm_worktree_meta_optional_exact() {  # <meta> <key>
 }
 
 fm_worktree_validate_meta_identity() {  # <meta> <task-id>
-  local meta=$1 id=$2 recorded_wsl recorded_common actual_wsl actual_common explicit_wsl sha_key sha_value
+  local meta=$1 recorded_wsl recorded_common actual_wsl actual_common explicit_wsl sha_key sha_value
   explicit_wsl=$(fm_worktree_meta_optional_exact "$meta" worktree_wsl) || return 1
   recorded_wsl=$explicit_wsl
   [ -n "$recorded_wsl" ] || recorded_wsl=$(fm_worktree_meta_optional_exact "$meta" worktree) || return 1

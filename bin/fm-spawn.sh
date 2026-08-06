@@ -646,7 +646,7 @@ record_spawn_failure() {  # <reason>
   mkdir -p "$STATE" 2>/dev/null || true
   if [ -d "$STATE" ]; then
     tmp="$STATE/$ID.spawn-failed.tmp.$$"
-    {
+    if {
       printf 'task=%s\n' "$ID"
       printf 'reason=%s\n' "$reason"
       printf 'project=%s\n' "${PROJ_ABS:-}"
@@ -656,7 +656,11 @@ record_spawn_failure() {  # <reason>
       printf 'worktree_common_dir=%s\n' "${WT_COMMON:-}"
       printf 'spawn_head_sha=%s\n' "${TASK_ROOT_SHA:-}"
       printf 'endpoint=%s\n' "${T:-}"
-    } > "$tmp" 2>/dev/null && mv -f -- "$tmp" "$STATE/$ID.spawn-failed" || rm -f -- "$tmp"
+    } > "$tmp" 2>/dev/null && mv -f -- "$tmp" "$STATE/$ID.spawn-failed"; then
+      :
+    else
+      rm -f -- "$tmp"
+    fi
     printf 'failed: %s\n' "$reason" >> "$STATE/$ID.status" 2>/dev/null || true
   fi
 }
