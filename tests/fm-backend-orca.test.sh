@@ -852,7 +852,7 @@ test_scout_teardown_refuses_orca_id_path_mismatch() {
   pass "fm-teardown.sh backend=orca: scout teardown refuses id/path mismatches"
 }
 
-test_teardown_removes_orca_worktree_when_path_missing() {
+test_teardown_refuses_orca_worktree_when_path_missing() {
   local proj wt data state config id out rc neutral
   id="orcamissingpathz7"
   proj="$TMP_ROOT/missing-path-project"
@@ -876,13 +876,15 @@ test_teardown_removes_orca_worktree_when_path_missing() {
     "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 )
   rc=$?
   set -e
-  expect_code 0 "$rc" "Orca teardown should release helpers even when the path is absent"$'\n'"$out"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-missing-path'$'\x1f''--json' \
-    "teardown did not close the recorded Orca terminal when the path was absent"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-missing-path'$'\x1f''--force'$'\x1f''--json' \
-    "teardown did not remove the recorded Orca worktree when the path was absent"
-  assert_absent "$state/$id.meta" "successful helper cleanup should remove task metadata"
-  pass "fm-teardown.sh backend=orca: releases terminal/worktree when path is absent"
+  [ "$rc" -ne 0 ] || fail "Orca teardown should refuse when the acquired worktree path is absent"
+  assert_contains "$out" "worktree identity is missing, ambiguous, or changed" \
+    "missing Orca worktree refusal should name the lost task-root identity"
+  assert_not_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close' \
+    "missing-worktree refusal should not close the recorded Orca terminal"
+  assert_not_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm' \
+    "missing-worktree refusal should not remove the recorded Orca worktree"
+  assert_present "$state/$id.meta" "missing-worktree refusal should preserve task metadata"
+  pass "fm-teardown.sh backend=orca: refuses before helper cleanup when the acquired worktree path is absent"
 }
 
 test_teardown_preserves_metadata_when_orca_remove_error_json() {
@@ -893,6 +895,7 @@ test_teardown_preserves_metadata_when_orca_remove_error_json() {
   data="$TMP_ROOT/remove-error-data"
   state="$TMP_ROOT/remove-error-state"
   config="$TMP_ROOT/remove-error-config"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
   mkdir -p "$data/$id" "$state" "$config"
   printf 'report\n' > "$data/$id/report.md"
   touch "$state/.last-watcher-beat"
@@ -902,8 +905,9 @@ test_teardown_preserves_metadata_when_orca_remove_error_json() {
     "backend=orca" "orca_worktree_id=wt-remove-error" \
     "decisions_reviewed=1" "decision_keys="
   orca_case remove-error-teardown
-  printf '{"ok":true,"result":{}}\n' > "$RESP/1.out"
-  printf '{"ok":false,"error":{"code":"worktree_not_removed","message":"worktree not removed"}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-remove-error","path":"%s"}}}\n' "$wt" > "$RESP/1.out"
+  printf '{"ok":true,"result":{}}\n' > "$RESP/2.out"
+  printf '{"ok":false,"error":{"code":"worktree_not_removed","message":"worktree not removed"}}\n' > "$RESP/3.out"
   neutral=$(neutral_fm_root "$CASE_DIR/neutral")
   set +e
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
@@ -917,7 +921,7 @@ test_teardown_preserves_metadata_when_orca_remove_error_json() {
   pass "fm-teardown.sh backend=orca: preserves metadata on remove ok:false JSON"
 }
 
-test_scout_teardown_refuses_orca_missing_report_when_path_missing() {
+test_scout_teardown_refuses_orca_missing_report_before_helper_cleanup() {
   local proj wt data state config id out rc neutral
   id="orcanoreportz4"
   proj="$TMP_ROOT/missing-report-project"
@@ -925,6 +929,7 @@ test_scout_teardown_refuses_orca_missing_report_when_path_missing() {
   data="$TMP_ROOT/missing-report-data"
   state="$TMP_ROOT/missing-report-state"
   config="$TMP_ROOT/missing-report-config"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
   mkdir -p "$data/$id" "$state" "$config"
   touch "$state/.last-watcher-beat"
   fm_write_meta "$state/$id.meta" \
@@ -939,11 +944,11 @@ test_scout_teardown_refuses_orca_missing_report_when_path_missing() {
     "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 )
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "Orca scout teardown should refuse without a report even when the path is absent"
+  [ "$rc" -ne 0 ] || fail "Orca scout teardown should refuse without a report"
   assert_contains "$out" "has no report" "Orca scout teardown should explain the missing report"
   [ ! -s "$LOG" ] || fail "refused Orca scout teardown should not close terminals or remove worktrees"
   assert_present "$state/$id.meta" "refused Orca scout teardown should preserve metadata"
-  pass "fm-teardown.sh backend=orca: scout report gate precedes pathless helper cleanup"
+  pass "fm-teardown.sh backend=orca: scout report gate precedes helper cleanup"
 }
 
 test_ship_teardown_refuses_orca_missing_worktree_path() {
@@ -970,8 +975,8 @@ test_ship_teardown_refuses_orca_missing_worktree_path() {
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || fail "Orca ship teardown should refuse a missing worktree path"
-  assert_contains "$out" "no inspectable git worktree" \
-    "Orca ship teardown should explain the fail-closed worktree requirement"
+  assert_contains "$out" "worktree identity is missing, ambiguous, or changed" \
+    "Orca ship teardown should explain the lost task-root identity"
   [ ! -s "$LOG" ] || fail "refused Orca ship teardown should not close terminals or remove worktrees"
   assert_present "$state/$id.meta" "refused Orca ship teardown should preserve metadata"
   pass "fm-teardown.sh backend=orca: ship teardown fails closed when worktree path is missing"
@@ -1320,9 +1325,9 @@ test_peek_and_crew_state_fail_closed_on_orca_error_json
 test_target_exists_rejects_orca_error_json
 test_scout_teardown_removes_orca_worktree_via_helper
 test_scout_teardown_refuses_orca_id_path_mismatch
-test_teardown_removes_orca_worktree_when_path_missing
+test_teardown_refuses_orca_worktree_when_path_missing
 test_teardown_preserves_metadata_when_orca_remove_error_json
-test_scout_teardown_refuses_orca_missing_report_when_path_missing
+test_scout_teardown_refuses_orca_missing_report_before_helper_cleanup
 test_ship_teardown_refuses_orca_missing_worktree_path
 test_ship_teardown_removes_orca_worktree_when_id_path_matches
 test_ship_teardown_refuses_orca_unresolvable_worktree_id

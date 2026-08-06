@@ -45,7 +45,7 @@
 #   (s) index.lock with a live holder, any age                -> lock kept, REFUSE
 #   (t) lsof error while checking index.lock                  -> lock kept, REFUSE
 #   (u) dirty worktree after stale lock cleanup               -> lock removed, REFUSE
-#   (v) non-linked repo index.lock                            -> lock removed, ALLOW
+#   (v) unregistered task root with repo index.lock           -> lock kept, REFUSE
 #   (w) index.lock mtime read failure                         -> lock kept, REFUSE
 #   (x) transient lock cleared after first failed return      -> retry ALLOW
 #   (y) persistent lock (never clears, not provably stale)    -> REFUSE loudly
@@ -1077,9 +1077,9 @@ test_stale_index_lock_cleanup_rechecks_dirty_worktree() {
   pass "stale lock cleanup rechecks and refuses dirty worktree before return"
 }
 
-test_non_linked_index_lock_path_is_checked_from_worktree() {
-  local case_dir rc lock
-  case_dir=$(make_case non-linked-index-lock)
+test_non_registered_task_root_refuses_before_lock_cleanup() {
+  local case_dir rc lock treehouse_log
+  case_dir=$(make_case non-registered-task-root)
   git -C "$case_dir/project" worktree remove --force "$case_dir/wt"
   git clone -q "$case_dir/origin.git" "$case_dir/wt"
   git -C "$case_dir/wt" checkout -q -b fm/task-x1
@@ -1088,8 +1088,13 @@ test_non_linked_index_lock_path_is_checked_from_worktree() {
   git -C "$case_dir/wt" push -q origin fm/task-x1
   git -C "$case_dir/wt" fetch -q origin
 
-  add_lock_aware_treehouse "$case_dir"
-  add_lsof_no_holder "$case_dir"
+  treehouse_log="$case_dir/treehouse.log"
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$treehouse_log"
+exit 97
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
 
   lock=$(git_index_lock_path "$case_dir/wt")
   mkdir -p "$(dirname "$lock")"
@@ -1102,11 +1107,28 @@ test_non_linked_index_lock_path_is_checked_from_worktree() {
   rc=$?
   set -e
 
-  expect_code 0 "$rc" "non-linked-index-lock: teardown should clear a normal repo index.lock"
-  assert_grep "removed provably-stale git lock" "$case_dir/stderr" \
-    "non-linked-index-lock: teardown did not report clearing the stale lock"
-  assert_absent "$lock" "non-linked-index-lock: stale lock file should have been removed"
-  pass "normal repo index.lock is resolved from the worktree and cleared when stale"
+  expect_code 1 "$rc" \
+    "non-registered-task-root: teardown should refuse a root that is not a registered worktree"
+
+  grep -Eq \
+    'worktree identity is missing, ambiguous, or changed|acquired root is no longer the registered worktree' \
+    "$case_dir/stderr" \
+    || fail "non-registered-task-root: refusal did not identify the invalid task root"
+
+  [ -e "$lock" ] \
+    || fail "non-registered-task-root: teardown removed the preserved index.lock"
+
+  [ -f "$case_dir/state/task-x1.meta" ] \
+    || fail "non-registered-task-root: teardown erased task metadata"
+
+  assert_absent "$treehouse_log" \
+    "non-registered-task-root: teardown invoked treehouse before validating the task root"
+
+  assert_not_contains "$(cat "$case_dir/stderr")" \
+    "removed provably-stale git lock" \
+    "non-registered-task-root: teardown attempted stale-lock cleanup on an invalid root"
+
+  pass "an unregistered task root is refused before lock cleanup or Treehouse return"
 }
 
 test_index_lock_mtime_read_failure_refuses() {
@@ -2532,7 +2554,7 @@ test_stale_index_lock_cleared_and_teardown_succeeds
 test_live_index_lock_is_never_removed_and_teardown_refuses
 test_lsof_error_never_clears_index_lock
 test_stale_index_lock_cleanup_rechecks_dirty_worktree
-test_non_linked_index_lock_path_is_checked_from_worktree
+test_non_registered_task_root_refuses_before_lock_cleanup
 test_index_lock_mtime_read_failure_refuses
 test_transient_index_lock_clears_after_first_attempt_and_retry_succeeds
 test_persistent_index_lock_exhausts_retries_and_refuses_loudly
