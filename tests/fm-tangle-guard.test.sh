@@ -163,8 +163,19 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
+  new-window) printf '%s %s\n' '@spawnwid' '%spawnpid'; exit 0 ;;
   list-windows) exit 0 ;;
-  has-session|new-session|new-window|send-keys) exit 0 ;;
+  send-keys)
+    case "$*" in
+      *launch-authorized*)
+        if [ -z "${FM_FAKE_SUPPRESS_LAUNCH_AUTH:-}" ] && [ -n "${FM_FAKE_LAUNCH_AUTH:-}" ]; then
+          : > "$FM_FAKE_LAUNCH_AUTH"
+        fi
+        ;;
+    esac
+    exit 0
+    ;;
+  has-session|new-session) exit 0 ;;
 esac
 exit 0
 SH
@@ -181,6 +192,7 @@ run_spawn() {
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$pane" TMUX="fake,1,0" \
+    FM_FAKE_LAUNCH_AUTH="$home/state/$id.launch-authorized" \
     PATH="$fakebin:$PATH" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" codex --mode no-mistakes --yolo off 2>&1
 }
@@ -241,9 +253,19 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  new-window) printf '%s\n' "@spawnwid"; exit 0 ;;
+  new-window) printf '%s %s\n' "@spawnwid" "%spawnpid"; exit 0 ;;
   list-windows) exit 0 ;;
-  has-session|new-session|send-keys|set-window-option) exit 0 ;;
+  send-keys)
+    case "$*" in
+      *launch-authorized*)
+        if [ -z "${FM_FAKE_SUPPRESS_LAUNCH_AUTH:-}" ] && [ -n "${FM_FAKE_LAUNCH_AUTH:-}" ]; then
+          : > "$FM_FAKE_LAUNCH_AUTH"
+        fi
+        ;;
+    esac
+    exit 0
+    ;;
+  has-session|new-session|set-window-option) exit 0 ;;
 esac
 exit 0
 SH
@@ -260,6 +282,7 @@ run_spawn_record() {
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$pane" TMUX="fake,1,0" \
+    FM_FAKE_LAUNCH_AUTH="$home/state/$id.launch-authorized" \
     FM_TMUX_REC="$rec" \
     PATH="$fakebin:$PATH" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" codex --mode no-mistakes --yolo off 2>&1
@@ -281,9 +304,9 @@ test_spawn_tmux_window_construction() {
   assert_contains "$out" "spawned rec-win-gg7" "recording spawn did not report success"
 
   # Bug 1 fix: append-form window creation (trailing colon on the session target).
-  assert_grep "new-window -dP -F #{window_id} -t firstmate: -n fm-rec-win-gg7" "$rec" \
+  assert_grep "new-window -dP -F #{window_id} #{pane_id} -t firstmate: -n fm-rec-win-gg7" "$rec" \
     "new-window must append at the session (trailing colon) and capture the window id"
-  assert_no_grep "new-window -dP -F #{window_id} -t firstmate -n" "$rec" \
+  assert_no_grep "new-window -dP -F #{window_id} #{pane_id} -t firstmate -n" "$rec" \
     "new-window must not target the bare session name (collides under base-index 1)"
 
   # Bug 2 fix (a): pin the window name against automatic-rename / allow-rename.
@@ -293,12 +316,35 @@ test_spawn_tmux_window_construction() {
     "must disable allow-rename on the spawned window"
 
   # Bug 2 fix (b): treehouse-get and the worktree wait loop target the stable id.
-  assert_grep "send-keys -t @spawnwid treehouse get Enter" "$rec" \
-    "treehouse get must be sent to the stable window id"
-  assert_grep "display-message -p -t @spawnwid #{pane_current_path}" "$rec" \
-    "the worktree wait loop must query the stable window id, not the name"
+  assert_grep "send-keys -t %spawnpid treehouse get Enter" "$rec" \
+    "treehouse get must be sent to the exact pane id"
+  pane_sends=$(grep -c "send-keys -t %spawnpid" "$rec" || true)
+  [ "$pane_sends" -ge 3 ] || fail "treehouse, setup, and launch were not all sent to the exact pane id"
+  assert_grep "display-message -p -t %spawnpid #{pane_current_path}" "$rec" \
+    "the worktree wait loop must query the same exact pane id"
 
-  pass "fm-spawn: appends windows by session-colon, pins the name, and targets the window id"
+  pass "fm-spawn: appends windows by session-colon, pins the name, and targets the exact pane id"
+}
+
+# The launch authorization marker is the readiness boundary. A pane that never
+# executes the validated cd/git preamble must fail without losing its metadata.
+test_spawn_launch_authorization_abort() {
+  local home proj fakebin out status wt
+  home="$TMP_ROOT/spawn-auth-home"
+  mkdir -p "$home/data"
+  proj=$(make_repo "$TMP_ROOT/spawn-auth-proj")
+  fakebin=$(make_spawn_fakebin "$TMP_ROOT/spawn-auth-fake")
+  wt="$TMP_ROOT/spawn-auth-wt"
+  git -C "$proj" worktree add -q --detach "$wt" >/dev/null 2>&1
+  export FM_FAKE_SUPPRESS_LAUNCH_AUTH=1 FM_SPAWN_LAUNCH_AUTH_TIMEOUT_SECS=1
+  out=$(run_spawn "$home" auth-missing-hh7 "$proj" "$wt" "$fakebin"); status=$?
+  unset FM_FAKE_SUPPRESS_LAUNCH_AUTH FM_SPAWN_LAUNCH_AUTH_TIMEOUT_SECS
+  expect_code 1 "$status" "missing launch authorization should abort"
+  assert_contains "$out" "launch authorization signal did not arrive" \
+    "missing launch authorization lacked the safe failure"
+  assert_present "$home/state/auth-missing-hh7.meta" \
+    "metadata must survive a missing launch authorization"
+  pass "fm-spawn: missing launch authorization aborts while preserving metadata"
 }
 
 test_lib_classification
@@ -307,3 +353,4 @@ test_bootstrap_line
 test_brief_assertion_precedes_branch
 test_spawn_isolation_abort
 test_spawn_tmux_window_construction
+test_spawn_launch_authorization_abort

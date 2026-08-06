@@ -26,12 +26,24 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
+  new-window) printf '%s %s\n' '@spawnwid' '%spawnpid'; exit 0 ;;
   list-windows)
     [ -z "${FM_FAKE_DUPLICATE_WINDOW:-}" ] || printf '%s\n' "$FM_FAKE_DUPLICATE_WINDOW"
     exit 0
     ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
+  has-session|new-session|kill-window) exit 0 ;;
   send-keys)
+    saw_literal=0
+    for a in "$@"; do
+      [ "$a" = -l ] && saw_literal=1
+      if [ "$a" = -l ] && [ -n "${FM_FAKE_LAUNCH_AUTH:-}" ]; then
+        : > "$FM_FAKE_LAUNCH_AUTH"
+      fi
+      if [ "$saw_literal" = 1 ]; then
+        auth=$(printf '%s' "$a" | sed -n "s/.*touch -- '\([^']*launch-authorized\)'.*/\1/p")
+        [ -z "$auth" ] || : > "$auth"
+      fi
+    done
     if [ "${FM_FAKE_TRACEPARENT_SEND_FAIL:-0}" = 1 ]; then
       for a in "$@"; do
         case "$a" in
@@ -118,6 +130,7 @@ run_spawn() {
     FM_FAKE_TRACEPARENT_SEND_UNSAFE="${FM_FAKE_TRACEPARENT_SEND_UNSAFE:-0}" \
     FM_FAKE_TRACE_METADATA_APPEND_FAIL="${FM_FAKE_TRACE_METADATA_APPEND_FAIL:-0}" \
     FM_FAKE_META_PATH="$home/state/$1.meta" \
+    FM_FAKE_LAUNCH_AUTH="$home/state/$1.launch-authorized" \
     FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" --mode no-mistakes --yolo off 2>&1
 }
@@ -132,6 +145,7 @@ run_spawn_tc() {
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
+    FM_FAKE_LAUNCH_AUTH="$home/state/$1.launch-authorized" \
     FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" --mode no-mistakes --yolo off 2>&1
 }

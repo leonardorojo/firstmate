@@ -853,7 +853,7 @@ pr_is_merged() {
 # "added". Returns non-zero when inconclusive (no default ref, or a merge conflict),
 # so the caller refuses rather than guesses.
 content_in_default() {
-  local name ref default_tree merged_tree
+  local name ref default_tree merged_tree base index
   name=$(default_branch) || return 1
   if git -C "$WT" remote get-url origin >/dev/null 2>&1; then
     git -C "$WT" fetch --quiet origin "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1 || return 1
@@ -865,8 +865,18 @@ content_in_default() {
   fi
   default_tree=$(git -C "$WT" rev-parse --quiet --verify "$ref^{tree}" 2>/dev/null) || return 1
   [ -n "$default_tree" ] || return 1
-  merged_tree=$(git -C "$WT" merge-tree --write-tree "$ref" HEAD 2>/dev/null) || return 1
-  merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
+  base=$(git -C "$WT" merge-base "$ref" HEAD 2>/dev/null) || return 1
+  index=$(mktemp "${TMPDIR:-/tmp}/fm-teardown-merge-index.XXXXXX") || return 1
+  rm -f -- "$index"
+  if ! GIT_INDEX_FILE="$index" git -C "$WT" read-tree -m "$base" "$ref" HEAD 2>/dev/null; then
+    rm -f -- "$index"
+    return 1
+  fi
+  merged_tree=$(GIT_INDEX_FILE="$index" git -C "$WT" write-tree 2>/dev/null) || {
+    rm -f -- "$index"
+    return 1
+  }
+  rm -f -- "$index"
   [ "$merged_tree" = "$default_tree" ]
 }
 

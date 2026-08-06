@@ -1546,11 +1546,18 @@ case "$BACKEND" in
     # #134 robustness (tmux): fm_backend_tmux_create_task captures a stable window
     # id and pins the window name (automatic-rename/allow-rename off) so a captain's
     # non-default tmux config cannot rename the window away from fm-<id> once
-    # treehouse cd's into the worktree. WT_TARGET carries that stable id for the
-    # rename-critical worktree-detection steps below; the persisted window= handle
-    # stays $T (the name form), which is safe now that rename is disabled.
-    WID=$(fm_backend_tmux_create_task "$SES" "$W" "$PROJ_ABS") || exit 1
-    WT_TARGET="$WID"
+    # treehouse cd's into the worktree. WT_TARGET carries the exact pane id for
+    # every command and cwd observation below; the persisted window= handle stays
+    # $T for lifecycle operations.
+    TMUX_IDS=$(fm_backend_tmux_create_task "$SES" "$W" "$PROJ_ABS") || exit 1
+    read -r WID PANE_ID <<EOF
+$TMUX_IDS
+EOF
+    [ -n "$WID" ] && [ -n "$PANE_ID" ] || {
+      echo "error: tmux did not return both a window id and pane id" >&2
+      exit 1
+    }
+    WT_TARGET="$PANE_ID"
     ;;
   herdr)
     # fm_backend_herdr_workspace_label resolves the target workspace from
@@ -1775,8 +1782,8 @@ if [ "$KIND" = secondmate ]; then
     || echo "warning: secondmate $ID trace-context inheritance failed for $PROJ_ABS" >&2
 fi
 # #134 robustness: only tmux needs a worktree-detection target distinct from $T -
-# its rename-safe stable window id, set as WT_TARGET=$WID in the tmux branch above.
-# Every other backend addresses its pane/surface by the id already in $T, so default
+# its exact pane id, set as WT_TARGET=$PANE_ID in the tmux branch above. Every
+# other backend addresses its pane/surface by the id already in $T, so default
 # WT_TARGET to $T for them (and for any future backend) - the shared treehouse-get +
 # worktree-detection steps below must never reference an unbound WT_TARGET under set -u.
 : "${WT_TARGET:=$T}"
@@ -1799,7 +1806,7 @@ spawn_current_path() {  # <target>
 }
 
 verify_spawn_launch_root() {
-  local observed observed_real candidate= count=0 i
+  local observed observed_real candidate='' count=0 i
   if [ "$BACKEND" = orca ] || [ "$KIND" = secondmate ]; then
     return 0
   fi
@@ -2318,6 +2325,9 @@ META_WINDOW=$T
   # backend= is written only for a non-default (non-tmux) backend, so an absent
   # backend= still means tmux (data/fm-backend-design-d7's P1 compatibility contract).
   [ "$BACKEND" = tmux ] || echo "backend=$BACKEND"
+  if [ "$BACKEND" = tmux ]; then
+    echo "pane=$PANE_ID"
+  fi
   if [ "$BACKEND" = herdr ]; then
     echo "herdr_session=$HERDR_SES"
     echo "herdr_workspace_id=$HERDR_WORKSPACE_ID"
@@ -2407,12 +2417,12 @@ fi
 # Export GOTMPDIR into the crewmate's pane shell so the agent and every child
 # process (go build, go test, ...) inherit it. Sent before the launch command so
 # the env is set when the agent starts; the brief sleep lets the export land.
-spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
+spawn_send_text_line "$WT_TARGET" "export GOTMPDIR=$TASK_TMP/gotmp"
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
 # entirely when trace context is off.
 if [ -n "$SPAWN_TRACEPARENT" ]; then
-  if spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then
+  if spawn_send_text_line "$WT_TARGET" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then
     if ! echo "traceparent=$SPAWN_TRACEPARENT" >> "$STATE/$ID.meta"; then
       LAUNCH="unset TRACEPARENT; $LAUNCH"
     fi
@@ -2425,13 +2435,29 @@ if [ -n "$SPAWN_TRACEPARENT" ]; then
   fi
 fi
 sleep 0.3
-spawn_send_literal "$T" "$LAUNCH"
+spawn_send_literal "$WT_TARGET" "$LAUNCH"
 sleep 0.3
 if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   HERDR_PROJECTION_ABORT_CLEANUP=0
   spawn_herdr_presentation_order_lock_release
 fi
-spawn_send_key "$T" Enter
+spawn_send_key "$WT_TARGET" Enter
+wait_for_launch_authorization() {
+  local auth=$1 timeout=${FM_SPAWN_LAUNCH_AUTH_TIMEOUT_SECS:-60} deadline
+  deadline=$((SECONDS + timeout))
+  while :; do
+    [ -f "$auth" ] && return 0
+    [ "$SECONDS" -ge "$deadline" ] && break
+    sleep 0.2
+  done
+  return 1
+}
+if ! wait_for_launch_authorization "$STATE_REAL/$ID.launch-authorized"; then
+  record_spawn_failure "launch authorization signal did not arrive from the exact task pane"
+  echo "error: launch authorization signal did not arrive; preserving metadata and refusing to continue" >&2
+  fm_backend_kill "$BACKEND" "$T" "$(grep '^zellij_tab_id=' "$STATE/$ID.meta" 2>/dev/null | tail -1 | cut -d= -f2-)" "fm-$ID" 2>/dev/null || true
+  exit 1
+fi
 verify_spawn_launch_root || exit 1
 if [ "$HARNESS" = kimi ]; then
   if ! kimi_wait_for_ready; then

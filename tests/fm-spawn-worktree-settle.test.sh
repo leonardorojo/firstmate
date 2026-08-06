@@ -48,8 +48,14 @@ esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
-  send-keys) exit 0 ;;
+  new-window) printf '%s %s\n' "@spawnwid" "%spawnpid"; exit 0 ;;
+  has-session|new-session|kill-window) exit 0 ;;
+  send-keys)
+    case "$*" in
+      *launch-authorized*) [ -n "${FM_FAKE_LAUNCH_AUTH:-}" ] && : > "$FM_FAKE_LAUNCH_AUTH" ;;
+    esac
+    exit 0
+    ;;
 esac
 exit 0
 SH
@@ -94,6 +100,7 @@ run_settle_spawn() {
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
+    FM_FAKE_LAUNCH_AUTH="$HOME_DIR/state/$id.launch-authorized" \
     FM_FAKE_PANE_PATH="$WT_DIR" FM_FAKE_PANE_STALE="$STALE_DIR" \
     FM_FAKE_PANE_STALE_READS="$STALE_READS" FM_FAKE_PANE_COUNTFILE="$COUNTFILE" \
     PATH="$FAKEBIN_DIR:$PATH" \

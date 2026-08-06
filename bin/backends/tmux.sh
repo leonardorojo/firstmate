@@ -73,7 +73,9 @@ fm_backend_tmux_container_ensure() {
 # refusing an existing <window-name> in <session>. Mirrors fm-spawn.sh's
 # duplicate-check-then-new-window sequence, including the exact error text
 # (session:window, matching how fm-spawn.sh composed its own $T). Prints the
-# created window's stable window id on stdout for the caller to target.
+# created window id and exact pane id, space-separated, for the caller to target.
+# The pane id is the command target because a window target can resolve through
+# tmux's active-pane rules or a renamed window.
 #
 # Robustness (fm-spawn tmux window handling under a non-default captain config):
 #   - Capture a STABLE window id with -P -F '#{window_id}', and let tmux append
@@ -90,10 +92,14 @@ fm_backend_tmux_create_task() {  # <session> <window-name> <proj-abs> -> prints 
     echo "error: window $ses:$wname already exists" >&2
     return 1
   fi
-  wid=$(tmux new-window -dP -F '#{window_id}' -t "$ses:" -n "$wname" -c "$proj_abs") || return 1
+  local ids pane
+  ids=$(tmux new-window -dP -F '#{window_id} #{pane_id}' -t "$ses:" -n "$wname" -c "$proj_abs") || return 1
+  wid=${ids%% *}
+  pane=${ids#* }
+  [ -n "$wid" ] && [ -n "$pane" ] && [ "$pane" != "$ids" ] || return 1
   tmux set-window-option -t "$wid" automatic-rename off 2>/dev/null || true
   tmux set-window-option -t "$wid" allow-rename off 2>/dev/null || true
-  printf '%s\n' "$wid"
+  printf '%s %s\n' "$wid" "$pane"
 }
 
 # fm_backend_tmux_current_path: the live pane's current working directory, or

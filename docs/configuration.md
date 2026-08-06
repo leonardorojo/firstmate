@@ -67,6 +67,7 @@ A cmux spawn additionally version-gates against the installed `cmux` binary's ve
 A backend spawn refusal from a missing dependency, version gate, or unauthenticated socket is terminal for that selected backend; firstmate surfaces it as a blocker instead of silently retrying another backend.
 Task meta records `backend=` only for a non-default backend; an absent `backend=` means `tmux`, preserving existing default-path meta files.
 Every new task records `endpoint_task_id=` as the cleanup binding between the metadata filename and its opaque runtime endpoint.
+A tmux task additionally records `pane=` as the exact pane target used for setup, launch, and cwd verification, while `window=` remains the lifecycle handle.
 A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`.
 A zellij task additionally records `zellij_session=`, `zellij_tab_id=`, and `zellij_pane_id=`.
 An Orca task additionally records `orca_worktree_id=` and `terminal=`, with `window=fm-<id>` kept as the shared firstmate alias.
@@ -74,6 +75,7 @@ A cmux task additionally records `cmux_workspace_id=` and `cmux_surface_id=`.
 A ship or scout task also records the canonical `worktree_wsl=`, the optional round-trip-validated `worktree_windows=`, `worktree_common_dir=`, and the distinct `spawn_head_sha=`, `current_head_sha=`, and teardown-time `final_head_sha=` identities.
 The forge's optional `pr_head=` remains a separate pull-request identity and is never used as the task-root SHA.
 The launch command changes into the canonical WSL root and verifies its Git top-level and common directory before starting the worker.
+The worker launch waits for the post-validation authorization marker before checking the endpoint cwd, and a missing marker preserves the task records and acquired root.
 Teardown repeats the same repository-registration and root-identity proof and preserves the task records when the root is missing, unrelated, ambiguous, or changed.
 The only compatibility exception is an explicit `--force` retirement of legacy metadata whose worktree is already absent, which removes records without claiming that the root was validated.
 A spawn that cannot complete that proof leaves `state/<id>.spawn-failed` and the acquired-root evidence for recovery instead of guessing a replacement checkout.
