@@ -76,12 +76,16 @@ case "${1:-}" in
     ;;
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
+  new-window) printf '%s\n' '@1 %1'; exit 0 ;;
+  has-session|new-session|kill-window) exit 0 ;;
   send-keys)
     prev=
     for arg in "$@"; do
       if [ "$prev" = -l ]; then
         printf '%s\n' "$arg" >> "$FM_FAKE_LAUNCH_LOG"
+        case "$arg" in
+          *launch-authorized*) : > "${FM_FAKE_LAUNCH_AUTH:?}" ;;
+        esac
         if [ "${FM_FAKE_EXECUTE_MUSE_LAUNCH:-}" = 1 ]; then
           case "$arg" in
             *"$FM_FAKE_MUSE_EXECUTABLE"*) (cd "$FM_FAKE_PANE_PATH" && bash -c "$arg") ;;
@@ -132,7 +136,7 @@ run_muse_spawn() {  # <home> <proj> <wt> <fakebin> <id> [extra args...]
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
-    FM_FAKE_LAUNCH_LOG="$home/launch.log" \
+    FM_FAKE_LAUNCH_LOG="$home/launch.log" FM_FAKE_LAUNCH_AUTH="$home/state/$id.launch-authorized" \
     FM_FAKE_MUSE_EXECUTABLE="$fakebin/muse" \
     FM_FAKE_MUSE_VERSIONED="$fakebin/muse-bin-test-version" \
     FM_FAKE_HARNESS_PROBE="$HARNESS" \

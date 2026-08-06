@@ -2389,7 +2389,7 @@ rm -f -- "$STATE_REAL/$ID.launch-authorized"
 HARNESS_LAUNCH=$LAUNCH
 LAUNCH="export FM_TASK_WORKTREE_WSL=$sq_task_root FM_TASK_WORKTREE_WINDOWS=$sq_task_windows FM_TASK_PROJECT_WSL=$sq_project_root FM_TASK_PROJECT_WINDOWS=$sq_project_windows FM_TASK_WORKTREE_SHA=$sq_task_sha; cd -- $sq_task_root && [ \"\$(pwd -P)\" = $sq_task_root ]"
 if [ -n "$WT_COMMON" ] && [ -n "$TASK_ROOT_SHA" ]; then
-  LAUNCH="$LAUNCH && [ \"\$(git rev-parse --show-toplevel)\" = $sq_task_root ] && [ \"\$(git rev-parse --git-common-dir)\" = $sq_task_common ]"
+  LAUNCH="$LAUNCH && [ \"\$(git rev-parse --show-toplevel)\" = $sq_task_root ] && [ \"\$(cd -- \"\$(git rev-parse --git-common-dir)\" && pwd -P)\" = $sq_task_common ]"
 fi
 LAUNCH="$LAUNCH && touch -- $sq_launch_auth && $HARNESS_LAUNCH"
 # Crewmate panes are created by a long-lived tmux/herdr daemon that does not

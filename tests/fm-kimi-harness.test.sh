@@ -59,7 +59,8 @@ esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
+  new-window) printf '%s\n' '@1 %1'; exit 0 ;;
+  has-session|new-session|kill-window) exit 0 ;;
   send-keys)
     prev=
     literal=
@@ -68,6 +69,9 @@ case "${1:-}" in
       prev=$arg
     done
     if [ -n "$literal" ]; then
+      case "$literal" in
+        *launch-authorized*) : > "${FM_FAKE_LAUNCH_AUTH:?}" ;;
+      esac
       case "$literal" in
         *' --auto')
           printf '%s\n' "$literal" >> "$FM_FAKE_LAUNCH_LOG"
@@ -164,6 +168,7 @@ run_spawn() {
     FM_FAKE_KIMI_SWALLOWED="$case_dir/kimi.swallowed" \
     FM_FAKE_KIMI_SWALLOW_FIRST="${FM_FAKE_KIMI_SWALLOW_FIRST:-no}" \
     FM_FAKE_TMUX_CALL_LOG="$case_dir/tmux-calls.log" \
+    FM_FAKE_LAUNCH_AUTH="$home/state/$id.launch-authorized" \
     FM_FAKE_BRIEF_REAL="$(cd "$home/data/$id" && pwd -P)/brief.md" \
     FM_KIMI_READY_POLLS=2 FM_KIMI_DELIVERY_POLLS=2 FM_KIMI_POLL_INTERVAL=0 \
     PATH="$fakebin:$BASE_PATH" \
@@ -192,8 +197,10 @@ test_kimi_launch_then_send_is_verified() {
   assert_contains "$out" "spawned $id harness=kimi" "kimi spawn did not report success"
 
   launch=$(cat "$CASE_DIR/launch.log")
-  [ "$launch" = "'$FAKEBIN_DIR/kimi' --model 'kimi-code/k3' --auto" ] \
-    || fail "kimi launch did not use the absolute binary, model, and --auto only: $launch"
+  case "$launch" in
+    *" && '$FAKEBIN_DIR/kimi' --model 'kimi-code/k3' --auto") : ;;
+    *) fail "kimi launch did not use the absolute binary, model, and --auto only: $launch" ;;
+  esac
   assert_not_contains "$launch" "--effort" "kimi launch emitted a nonexistent effort flag"
   assert_not_contains "$launch" "turn-ended" "kimi launch embedded a turn-end path"
   assert_not_contains "$launch" "__TURNEND__" "kimi launch retained a turn-end placeholder"
@@ -449,8 +456,10 @@ test_kimi_falls_back_to_expanded_home_binary() {
   rc=$?
   expect_code 0 "$rc" "Kimi HOME fallback spawn should succeed"
   launch=$(cat "$CASE_DIR/launch.log")
-  [ "$launch" = "'$fallback' --auto" ] \
-    || fail "Kimi fallback did not expand HOME into an absolute executable: $launch"
+  case "$launch" in
+    *" && '$fallback' --auto") : ;;
+    *) fail "Kimi fallback did not expand HOME into an absolute executable: $launch" ;;
+  esac
   pass "fm-spawn: Kimi fallback expands the active HOME"
 }
 

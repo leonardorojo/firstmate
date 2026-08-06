@@ -798,10 +798,20 @@ make_spawn_fakebin() {  # <dir> <fake-worktree-path> -> echoes fakebin dir
 set -u
 { printf 'tmux'; for a in "\$@"; do printf '\\x1f%s' "\$a"; done; printf '\\n'; } >> "\${FM_TMUX_LOG:?}"
 case "\${1:-}" in
+  new-window)
+    printf '%s\\n' '@1 %1'
+    exit 0
+  ;;
   display-message)
     for a in "\$@"; do case "\$a" in *pane_current_path*) printf '%s\\n' "$wt"; exit 0 ;; esac; done
     printf 'firstmate\\n'; exit 0 ;;
   list-windows) exit 0 ;;
+  send-keys)
+    case "\$*" in
+      *launch-authorized*) : > "\${FM_FAKE_LAUNCH_AUTH:?}" ;;
+    esac
+    exit 0
+  ;;
 esac
 exit 0
 SH
@@ -818,6 +828,7 @@ run_spawn_case() {  # <bin-root> <fakebin> <log> <state> <data> <config> <proj> 
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_TMUX_LOG="$log" \
+    FM_FAKE_LAUNCH_AUTH="$state/$1.launch-authorized" \
     "$bin/bin/fm-spawn.sh" "$@"
 }
 
@@ -860,6 +871,10 @@ make_spawn_symlink_fakebin() {  # <dir> <initial-project-path> <worktree-path> -
 set -u
 { printf 'tmux'; for a in "\$@"; do printf '\\x1f%s' "\$a"; done; printf '\\n'; } >> "\${FM_TMUX_LOG:?}"
 case "\${1:-}" in
+  new-window)
+    printf '%s\\n' '@1 %1'
+    exit 0
+  ;;
   display-message)
     for a in "\$@"; do case "\$a" in *pane_current_path*)
       printf x >> "$counter"
@@ -872,6 +887,12 @@ case "\${1:-}" in
     ;; esac; done
     printf 'firstmate\\n'; exit 0 ;;
   list-windows) exit 0 ;;
+  send-keys)
+    case "\$*" in
+      *launch-authorized*) : > "\${FM_FAKE_LAUNCH_AUTH:?}" ;;
+    esac
+    exit 0
+  ;;
 esac
 exit 0
 SH
@@ -1071,7 +1092,7 @@ test_spawn_default_backend_writes_no_meta_field() {
   out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
-    FM_TMUX_LOG="$TMP_ROOT/nobackend.log" \
+    FM_TMUX_LOG="$TMP_ROOT/nobackend.log" FM_FAKE_LAUNCH_AUTH="$state/$id.launch-authorized" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --backend tmux 2>&1)
   expect_code 0 $? "explicit --backend tmux should spawn successfully"$'\n'"$out"
   assert_no_grep 'backend=' "$state/$id.meta" \
@@ -1095,7 +1116,7 @@ test_spawn_explicit_backend_flag_beats_autodetect_herdr_env() {
   out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" HERDR_ENV=1 \
-    FM_TMUX_LOG="$TMP_ROOT/explicit-backend.log" \
+    FM_TMUX_LOG="$TMP_ROOT/explicit-backend.log" FM_FAKE_LAUNCH_AUTH="$state/$id.launch-authorized" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --backend tmux 2>&1)
   expect_code 0 $? "explicit --backend tmux should spawn successfully even with HERDR_ENV=1 set"$'\n'"$out"
   assert_no_grep 'backend=' "$state/$id.meta" \
@@ -1122,7 +1143,7 @@ test_spawn_autodetect_nesting_resolves_tmux_silently() {
   out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" HERDR_ENV=1 \
-    FM_TMUX_LOG="$TMP_ROOT/nest.log" \
+    FM_TMUX_LOG="$TMP_ROOT/nest.log" FM_FAKE_LAUNCH_AUTH="$state/$id.launch-authorized" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off 2>&1)
   expect_code 0 $? "fm-spawn.sh should auto-detect tmux and spawn successfully for nested tmux-in-herdr"$'\n'"$out"
   assert_no_grep 'backend=' "$state/$id.meta" \
