@@ -360,6 +360,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-secondmate-nudge-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-treehouse-lib.sh
+. "$SCRIPT_DIR/fm-treehouse-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
@@ -1276,6 +1278,16 @@ else
   ARG3=${POS[2]:-}
 fi
 [ -z "$HARNESS_ARG" ] || ARG3=$HARNESS_ARG
+
+# Resolve treehouse in the Firstmate shell before any command is sent to a
+# session-provider pane. Herdr's PowerShell pane may not share Git Bash's PATH,
+# so the helper carries the concrete executable path across that boundary only
+# on Windows; every other backend keeps the historical bare command.
+TREEHOUSE_GET_COMMAND=
+if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+  fm_treehouse_resolve_command "$BACKEND" || exit 1
+  TREEHOUSE_GET_COMMAND=$FM_TREEHOUSE_GET_COMMAND
+fi
 
 shell_quote() {
   printf "'"
@@ -2808,7 +2820,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fi
   [ "$KIND" = secondmate ] || validate_spawn_worktree "relaunch" "$T"
 elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
-  spawn_send_text_line "$WT_TARGET" 'treehouse get'
+  spawn_send_text_line "$WT_TARGET" "$TREEHOUSE_GET_COMMAND"
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
   # Target the stable window id, not the name: if the name is ever lost (e.g. an
