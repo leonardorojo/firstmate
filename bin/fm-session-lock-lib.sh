@@ -7,6 +7,11 @@
 # bin/fm-claude-stop-autoarm.sh uses it to prove a Stop hook fires inside the
 # lock-owning primary session before it may arm or rewake.
 # This file is sourced by scripts and has no side effects on source.
+#
+# Windows Pi startup readiness can be tuned for unusual host load with
+# FM_NATIVE_HARNESS_PID_POLL_COUNT (total native lookups, default 5, capped at
+# 10) and FM_NATIVE_HARNESS_PID_POLL_INTERVAL_MS (default 50 milliseconds,
+# capped at 100 milliseconds). Invalid values use the conservative defaults.
 
 # Cursor process identity is NOT expressible as a command-name pattern and is
 # deliberately not added to the tables below: Cursor's installed names are
@@ -271,19 +276,55 @@ _fm_win_ancestry_rows() {
 # supplies FM_NATIVE_HARNESS_PID, validate that live Win32 process first and use
 # it only for a verified harness. Invalid or absent values fall back to climbing
 # the MSYS chain and then to this shell's own winpid when the table cannot be read.
+_fm_win_native_pid_poll_count() {
+  local count=${FM_NATIVE_HARNESS_PID_POLL_COUNT:-5}
+  case "$count" in
+    ''|*[!0-9]*) count=5 ;;
+  esac
+  [ "$count" -ge 1 ] 2>/dev/null || count=1
+  [ "$count" -le 10 ] 2>/dev/null || count=10
+  printf '%s\n' "$count"
+}
+
+_fm_win_native_pid_poll_interval_ms() {
+  local interval=${FM_NATIVE_HARNESS_PID_POLL_INTERVAL_MS:-50}
+  case "$interval" in
+    ''|*[!0-9]*) interval=50 ;;
+  esac
+  [ "$interval" -le 100 ] 2>/dev/null || interval=100
+  printf '%s\n' "$interval"
+}
+
+_fm_win_explicit_harness_pid() {  # <syntactically-valid-winpid>
+  local pid=$1 info comm args attempt=1 poll_count interval_ms interval
+  poll_count=$(_fm_win_native_pid_poll_count)
+  interval_ms=$(_fm_win_native_pid_poll_interval_ms)
+  interval=$(printf '0.%03d' "$interval_ms")
+  while [ "$attempt" -le "$poll_count" ]; do
+    if info=$(_fm_win_proc_info "$pid") && [ -n "$info" ]; then
+      comm=${info%%$'\t'*}
+      args=${info#*$'\t'}
+      if fm_harness_process_matches "$comm" "$args"; then
+        return 0
+      fi
+    fi
+    if [ "$attempt" -lt "$poll_count" ] && [ "$interval_ms" -gt 0 ]; then
+      sleep "$interval"
+    fi
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
 _fm_win_ancestry_start_winpid() {
-  local explicit info comm args top
+  local explicit top
   explicit=${FM_NATIVE_HARNESS_PID:-}
   case "$explicit" in
     ''|*[!0-9]*|0) ;;
     *)
-      if info=$(_fm_win_proc_info "$explicit") && [ -n "$info" ]; then
-        comm=${info%%$'\t'*}
-        args=${info#*$'\t'}
-        if fm_harness_process_matches "$comm" "$args"; then
-          printf '%s\n' "$explicit"
-          return 0
-        fi
+      if _fm_win_explicit_harness_pid "$explicit"; then
+        printf '%s\n' "$explicit"
+        return 0
       fi
       ;;
   esac

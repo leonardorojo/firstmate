@@ -75,7 +75,17 @@ win_eval() {  # <expression>
     _fm_win_ps() { cat \"\$WIN_MSYSPS\"; }
     _fm_win_walk_rows() { [ \"\$1\" = \"\${WIN_EXPECT_START:-100}\" ] && cat \"\$WIN_CHAIN\"; }
     _fm_win_proc_info() {
-      local wanted=\"\$1\" pid comm args
+      local wanted=\"\$1\" pid comm args call=1
+      if [ -n \"\$WIN_INFO_CALL_LOG\" ]; then
+        call=\$((\$(wc -l < \"\$WIN_INFO_CALL_LOG\") + 1))
+        printf '%s\\n' \"\$wanted\" >> \"\$WIN_INFO_CALL_LOG\"
+      fi
+      case \" \$WIN_INFO_UNAVAILABLE_CALLS \" in
+        *\" \$call \"*) return 1 ;;
+      esac
+      case \" \$WIN_INFO_PARTIAL_CALLS \" in
+        *\" \$call \"*) printf '%s\\n' node.exe; return 0 ;;
+      esac
       while IFS=\$'\\t' read -r pid comm args; do
         if [ \"\$pid\" = \"\$wanted\" ]; then
           printf '%s\\t%s\\n' \"\$comm\" \"\$args\"
@@ -488,6 +498,71 @@ test_windows_explicit_native_host_pid_is_verified_before_use() {
   pass "session-lock: explicit native host pids require live structural Pi identity and otherwise use the MSYS bridge"
 }
 
+test_windows_explicit_native_host_pid_retries_bounded_readiness() {
+  local dir got calls
+  dir="$TMP_ROOT/win-explicit-host-retry"
+  win_fixture "$dir"
+
+  : > "$dir/info-calls"
+  got=$(FM_NATIVE_HARNESS_PID=500 \
+    FM_NATIVE_HARNESS_PID_POLL_COUNT=4 \
+    FM_NATIVE_HARNESS_PID_POLL_INTERVAL_MS=0 \
+    WIN_INFO_CALL_LOG="$dir/info-calls" \
+    WIN_INFO_UNAVAILABLE_CALLS='1' \
+    WIN_INFO_PARTIAL_CALLS='2' \
+    win_eval '_fm_win_ancestry_start_winpid') \
+    || fail "windows: explicit Pi pid did not recover after transient lookup failures"
+  [ "$got" = 500 ] || fail "windows: transient lookup recovery resolved '$got', expected 500"
+  calls=$(wc -l < "$dir/info-calls")
+  [ "$calls" -eq 3 ] || fail "windows: transient lookup recovery used $calls probes, expected 3"
+
+  : > "$dir/info-calls"
+  got=$(FM_NATIVE_HARNESS_PID=500 \
+    FM_NATIVE_HARNESS_PID_POLL_COUNT=4 \
+    FM_NATIVE_HARNESS_PID_POLL_INTERVAL_MS=0 \
+    WIN_INFO_CALL_LOG="$dir/info-calls" \
+    win_eval '_fm_win_ancestry_start_winpid') \
+    || fail "windows: immediately valid explicit Pi pid was not accepted"
+  [ "$got" = 500 ] || fail "windows: immediately valid explicit Pi pid resolved '$got', expected 500"
+  calls=$(wc -l < "$dir/info-calls")
+  [ "$calls" -eq 1 ] || fail "windows: immediately valid explicit Pi pid used $calls probes, expected 1"
+
+  : > "$dir/info-calls"
+  got=$(FM_NATIVE_HARNESS_PID=999999 \
+    FM_NATIVE_HARNESS_PID_POLL_COUNT=3 \
+    FM_NATIVE_HARNESS_PID_POLL_INTERVAL_MS=0 \
+    WIN_INFO_CALL_LOG="$dir/info-calls" \
+    win_eval '_fm_win_ancestry_start_winpid') \
+    || fail "windows: persistent unavailable explicit pid did not fall back"
+  [ "$got" = 100 ] || fail "windows: persistent unavailable explicit pid resolved '$got', expected 100"
+  calls=$(wc -l < "$dir/info-calls")
+  [ "$calls" -eq 3 ] || fail "windows: persistent unavailable explicit pid used $calls probes, expected 3"
+
+  : > "$dir/info-calls"
+  got=$(FM_NATIVE_HARNESS_PID=501 \
+    FM_NATIVE_HARNESS_PID_POLL_COUNT=3 \
+    FM_NATIVE_HARNESS_PID_POLL_INTERVAL_MS=0 \
+    WIN_INFO_CALL_LOG="$dir/info-calls" \
+    win_eval '_fm_win_ancestry_start_winpid') \
+    || fail "windows: live non-Pi explicit pid did not fall back"
+  [ "$got" = 100 ] || fail "windows: live non-Pi explicit pid resolved '$got', expected 100"
+  calls=$(wc -l < "$dir/info-calls")
+  [ "$calls" -eq 3 ] || fail "windows: live non-Pi explicit pid used $calls probes, expected 3"
+
+  : > "$dir/info-calls"
+  got=$(FM_NATIVE_HARNESS_PID='500x' \
+    FM_NATIVE_HARNESS_PID_POLL_COUNT=3 \
+    FM_NATIVE_HARNESS_PID_POLL_INTERVAL_MS=0 \
+    WIN_INFO_CALL_LOG="$dir/info-calls" \
+    win_eval '_fm_win_ancestry_start_winpid') \
+    || fail "windows: malformed explicit pid did not fall back"
+  [ "$got" = 100 ] || fail "windows: malformed explicit pid resolved '$got', expected 100"
+  calls=$(wc -l < "$dir/info-calls")
+  [ "$calls" -eq 0 ] || fail "windows: malformed explicit pid triggered $calls native probes"
+
+  pass "session-lock: explicit native Pi identity retries only bounded structural probes before the existing fallback"
+}
+
 test_windows_explicit_native_host_avoids_missing_parent_bash() {
   local dir got
   dir="$TMP_ROOT/win-explicit-missing-parent"
@@ -750,6 +825,7 @@ test_windows_harness_is_found_beyond_the_bash_hops
 test_windows_liveness_reads_the_native_process_table
 test_windows_command_parser_handles_stime_width_and_path_forms
 test_windows_explicit_native_host_pid_is_verified_before_use
+test_windows_explicit_native_host_pid_retries_bounded_readiness
 test_windows_explicit_native_host_avoids_missing_parent_bash
 test_windows_liveness_uses_full_win32_command_line_for_pi
 test_windows_parent_newer_than_child_stops_the_walk
