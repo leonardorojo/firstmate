@@ -66,6 +66,52 @@ win_eval() {  # <expression>
   " "$LIB"
 }
 
+capability_eval() {  # <fakebin> <expression>
+  local fakebin=$1 expr=$2
+  PATH="$fakebin:$PATH" FM_LOCK_PLATFORM= bash -c "
+    . \"\$0\"
+    $expr
+  " "$LIB"
+}
+
+test_platform_selection_uses_cached_ps_capability_and_override() {
+  local dir fakebin got calls
+  dir="$TMP_ROOT/platform-selection"
+  fakebin=$(fm_fakebin "$dir")
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ "${1:-}" = -o ] && [ "${2:-}" = comm= ] && [ "${3:-}" = -p ]; then
+  if [ "${FM_TEST_PS_FAIL:-0}" = 1 ]; then exit 1; fi
+  printf '%s\n' "${FM_TEST_PS_RESULT:-bash}"
+  [ -n "${FM_TEST_PS_LOG:-}" ] && printf '%s\n' probe >> "$FM_TEST_PS_LOG"
+  exit 0
+fi
+exit 1
+SH
+  chmod +x "$fakebin/ps"
+  export FM_TEST_PS_LOG="$dir/probe.log"
+  got=$(capability_eval "$fakebin" '_fm_lock_platform; _fm_lock_platform') \
+    || fail "capability probe unexpectedly failed"
+  unset FM_TEST_PS_LOG
+  [ "$got" = $'unix\nunix' ] \
+    || fail "a successful ps -o comm= capability probe selected '$got' instead of unix"
+  calls=$(wc -l < "$dir/probe.log")
+  [ "$calls" -eq 1 ] || fail "capability probe was not cached: ran $calls times"
+
+  got=$(FM_TEST_PS_FAIL=1 capability_eval "$fakebin" '_fm_lock_platform') \
+    || fail "a failed capability probe unexpectedly failed"
+  [ "$got" = windows ] \
+    || fail "a failed ps -o comm= capability probe selected '$got' instead of windows"
+  got=$(FM_LOCK_PLATFORM=unix PATH="$fakebin:$PATH" bash -c '. "$0"; _fm_lock_platform' "$LIB") \
+    || fail "FM_LOCK_PLATFORM unix override failed"
+  [ "$got" = unix ] || fail "FM_LOCK_PLATFORM unix override returned '$got'"
+  got=$(FM_LOCK_PLATFORM=windows PATH="$fakebin:$PATH" bash -c '. "$0"; _fm_lock_platform' "$LIB") \
+    || fail "FM_LOCK_PLATFORM windows override failed"
+  [ "$got" = windows ] || fail "FM_LOCK_PLATFORM windows override returned '$got'"
+  pass "session-lock: platform selection probes ps -o comm= once and honors FM_LOCK_PLATFORM"
+}
+
 test_version_named_session_is_identified_on_both_platforms() {
   local dir fakebin shape got
   dir="$TMP_ROOT/version-named"
@@ -260,13 +306,17 @@ win_fixture() {  # <dir>
     printf '%s\t%s\t%s\n' 400 wezterm-gui.exe '"C:\Program Files\WezTerm\wezterm-gui.exe" start'
   } > "$dir/chain"
   # ps -W table. STIME is two tokens ("Jul 30") on the claude row to prove the
-  # COMMAND parser anchors on the drive-letter path, not a fixed column offset;
-  # System has a bare COMMAND (no path) and must never resolve as a harness.
+  # COMMAND starts after either one-token STIME (HH:MM:SS) or two-token STIME
+  # (MMM DD), and may be an MSYS path, drive-letter path, or bare native name.
+  # The parser must return all of those metadata forms while the harness matcher
+  # remains responsible for identity policy.
   {
     printf '%s\n' '      PID    PPID    PGID     WINPID   TTY         UID    STIME COMMAND'
     printf '%s\n' '  4217716       0       0        200   ?              0 Jul 30 C:\Users\u\AppData\Local\claude.exe'
+    printf '%s\n' '  4217717       0       0        201   ?              0 10:02:04 /c/Users/u/AppData/Local/claude.exe'
+    printf '%s\n' '  4217718       0       0        202   ?              0 10:02:05 C:\Users\u\AppData\Local\claude.exe'
     printf '%s\n' '  4194308       0       0          4   ?              0 Jul 30 System'
-    printf '%s\n' '  4207384       0       0        101   ?              0 10:02:04 C:\Program Files\Git\usr\bin\bash.exe'
+    printf '%s\n' '  4207384       0       0        101   ?              0 10:02:06 C:\Program Files\Git\usr\bin\bash.exe'
   } > "$dir/psw"
   # MSYS logical process table: this subprocess (msys 50, winpid 3856 - orphaned,
   # never a valid Win32 walk start) under the topmost MSYS shell (msys 51, winpid
@@ -303,6 +353,8 @@ test_windows_liveness_reads_the_native_process_table() {
   win_fixture "$dir"
   win_eval 'fm_harness_pid_alive 200' \
     || fail "windows: a live claude.exe was not recognized as a harness (COMMAND parse under a two-token STIME)"
+  win_eval 'fm_harness_pid_alive 201' \
+    || fail "windows: a live /c/... claude.exe was not recognized as a harness (COMMAND parse under a one-token STIME)"
   if win_eval 'fm_harness_pid_alive 101'; then
     fail "windows: a live bash.exe passed the harness-liveness predicate"
   fi
@@ -313,6 +365,65 @@ test_windows_liveness_reads_the_native_process_table() {
     fail "windows: a pid absent from the native-process table was reported alive"
   fi
   pass "session-lock: on Windows liveness and identity come from the native-process table"
+}
+
+test_windows_command_parser_handles_stime_width_and_path_forms() {
+  local dir info
+  dir="$TMP_ROOT/win-command-parser"
+  win_fixture "$dir"
+  info=$(win_eval '_fm_win_proc_info 200') \
+    || fail "windows: two-token STIME drive-letter metadata was not parsed"
+  [ "$info" = $'C:\\Users\\u\\AppData\\Local\\claude.exe\tC:\\Users\\u\\AppData\\Local\\claude.exe' ] \
+    || fail "windows: drive-letter metadata parsed as '$info'"
+  info=$(win_eval '_fm_win_proc_info 201') \
+    || fail "windows: one-token STIME MSYS metadata was not parsed"
+  [ "$info" = $'/c/Users/u/AppData/Local/claude.exe\t/c/Users/u/AppData/Local/claude.exe' ] \
+    || fail "windows: MSYS metadata parsed as '$info'"
+  info=$(win_eval '_fm_win_proc_info 4') \
+    || fail "windows: bare native metadata was not parsed"
+  [ "$info" = $'System\tSystem' ] \
+    || fail "windows: bare native metadata parsed as '$info'"
+  pass "session-lock: Windows COMMAND parsing follows STIME width for MSYS, drive, and bare names"
+}
+
+test_windows_parent_newer_than_child_stops_the_walk() {
+  local powershell_cmd= candidate dir driver script got
+  for candidate in powershell.exe pwsh powershell; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      powershell_cmd=$candidate
+      break
+    fi
+  done
+  if [ -z "${powershell_cmd:-}" ]; then
+    pass "session-lock: parent creation-time rejection skipped without PowerShell"
+    return
+  fi
+  dir="$TMP_ROOT/win-creation-date"
+  mkdir -p "$dir"
+  driver="$dir/driver.ps1"
+  script="$ROOT/bin/fm-win-ancestry.ps1"
+  if command -v cygpath >/dev/null 2>&1; then
+    script=$(cygpath -w "$script")
+  fi
+  cat > "$driver" <<'PS'
+[CmdletBinding()]
+param([Parameter(Mandatory = $true)][string]$Script)
+
+function Get-CimInstance {
+  [CmdletBinding()]
+  param([Parameter(Position = 0)][string]$ClassName, [string[]]$Property)
+  [pscustomobject]@{ ProcessId = 100; ParentProcessId = 200; Name = 'child.exe'; CommandLine = 'child.exe'; CreationDate = [datetime]'2024-01-02T00:00:00' }
+  [pscustomobject]@{ ProcessId = 200; ParentProcessId = 300; Name = 'new-parent.exe'; CommandLine = 'new-parent.exe'; CreationDate = [datetime]'2024-01-03T00:00:00' }
+  [pscustomobject]@{ ProcessId = 300; ParentProcessId = 0; Name = 'root.exe'; CommandLine = 'root.exe'; CreationDate = [datetime]'2024-01-01T00:00:00' }
+}
+
+& $Script -Start 100
+PS
+  got=$("$powershell_cmd" -NoProfile -ExecutionPolicy Bypass -File "$driver" "$script" 2>&1 | tr -d '\r') \
+    || fail "Windows ancestry fixture failed: $got"
+  [ "$got" = $'100\tchild.exe\tchild.exe' ] \
+    || fail "a parent newer than its child was traversed: '$got'"
+  pass "session-lock: Windows ancestry rejects a parent created after the child"
 }
 
 test_windows_lock_above_the_harness_is_not_owned() {
@@ -491,15 +602,22 @@ test_e2e_daemon_parented_version_named_session_keeps_its_lock() {
   pass "session-lock e2e: a version-named session under a harness-named daemon keeps its own lock"
 }
 
+test_platform_selection_uses_cached_ps_capability_and_override
 test_version_named_session_is_identified_on_both_platforms
 test_ordinary_paths_are_never_harness_processes
 test_harness_beyond_a_gap_never_owns_the_lock
 test_competing_version_named_session_is_seen_as_live
 test_windows_harness_is_found_beyond_the_bash_hops
 test_windows_liveness_reads_the_native_process_table
+test_windows_command_parser_handles_stime_width_and_path_forms
+test_windows_parent_newer_than_child_stops_the_walk
 test_windows_lock_above_the_harness_is_not_owned
 test_windows_ancestry_start_bridges_msys_to_windows
 test_windows_ancestry_start_falls_back_when_msys_table_lacks_self
-test_e2e_version_named_session_claims_the_home
-test_e2e_daemon_parented_session_claims_the_home
-test_e2e_daemon_parented_version_named_session_keeps_its_lock
+if [ "${FM_SESSION_LOCK_SKIP_E2E:-0}" = 1 ]; then
+  pass "session-lock e2e: skipped by FM_SESSION_LOCK_SKIP_E2E=1 after unit coverage"
+else
+  test_e2e_version_named_session_claims_the_home
+  test_e2e_daemon_parented_session_claims_the_home
+  test_e2e_daemon_parented_version_named_session_keeps_its_lock
+fi

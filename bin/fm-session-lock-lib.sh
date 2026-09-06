@@ -106,13 +106,24 @@ fm_harness_process_matches() {  # <comm> <args>
 # stores whatever this layer reports, so every consumer compares like with like.
 
 # Selected process-inspection platform: "windows" or "unix". FM_LOCK_PLATFORM
-# overrides detection so the Windows path is exercisable from a Unix test host.
+# overrides detection so either path is deterministic in tests and debugging.
+# Without an override, probe the exact Unix capability this library needs. The
+# cached result avoids repeated process-table probes during one lock decision and
+# does not assume that uname describes the shell's process implementation.
 _fm_lock_platform() {
   if [ -n "${FM_LOCK_PLATFORM:-}" ]; then printf '%s\n' "$FM_LOCK_PLATFORM"; return 0; fi
-  case "$(uname -s 2>/dev/null)" in
-    MINGW*|MSYS*|CYGWIN*) printf 'windows\n' ;;
-    *) printf 'unix\n' ;;
-  esac
+  if [ -n "${_FM_LOCK_PLATFORM_CACHE:-}" ]; then
+    printf '%s\n' "$_FM_LOCK_PLATFORM_CACHE"
+    return 0
+  fi
+  local probe_comm
+  if probe_comm=$(ps -o comm= -p "$$" 2>/dev/null) &&
+    [ -n "${probe_comm//[[:space:]]/}" ]; then
+    _FM_LOCK_PLATFORM_CACHE=unix
+  else
+    _FM_LOCK_PLATFORM_CACHE=windows
+  fi
+  printf '%s\n' "$_FM_LOCK_PLATFORM_CACHE"
 }
 
 # Windows data sources, each a single seam a test can shadow (as the suite
@@ -201,24 +212,25 @@ _fm_win_top_msys_winpid() {
 }
 
 # Look up a live Windows process by its WINPID in the native-process table.
-# Prints comm<TAB>args - the executable path serving as both, which is all the
-# harness matcher needs - or returns 1 when the pid is not a live native process
-# with a resolvable executable path. `ps -W` columns are:
+# Prints comm<TAB>args, using COMMAND for both fields, or returns 1 when the pid
+# is not present in the native-process table. `ps -W` columns are:
 #   PID PPID PGID WINPID TTY UID STIME COMMAND...
-# COMMAND is an absolute path that may contain spaces, and STIME is one token for
-# recent processes (HH:MM:SS) but two for older ones (MMM DD), so the column
-# offset of COMMAND is not fixed. Anchor on the first drive-letter or UNC path
-# token instead and rejoin to end of line. A native process whose COMMAND is a
-# bare name (System, Registry) has no such token and is never a harness, so it
-# is correctly reported as not found.
+# STIME is one token for recent processes (HH:MM or HH:MM:SS) and two for older
+# ones (MMM DD), so derive COMMAND's position from the STIME shape. Rejoining all
+# remaining fields preserves spaces in executable paths and also returns Cygwin /
+# MSYS paths, drive-letter paths, UNC paths, and bare native names. The parser
+# reports process metadata only; fm_harness_process_matches remains the sole
+# owner of harness identity policy.
 _fm_win_proc_info() {  # <winpid>
   _fm_win_ps_w | awk -v w="$1" '
     $4 == w {
-      start = 0
-      for (i = 5; i <= NF; i++) {
-        if ($i ~ /^[A-Za-z]:[\\\/]/ || $i ~ /^\\\\/) { start = i; break }
+      if ($7 ~ /^[0-9][0-9]:[0-9][0-9](:[0-9][0-9])?$/) {
+        start = 8
+      } else if ($7 ~ /^[A-Z][a-z][a-z]$/ && $8 ~ /^[0-9][0-9]?$/) {
+        start = 9
+      } else {
+        next
       }
-      if (start == 0) next
       cmd = ""
       for (i = start; i <= NF; i++) cmd = cmd (i > start ? " " : "") $i
       printf "%s\t%s\n", cmd, cmd

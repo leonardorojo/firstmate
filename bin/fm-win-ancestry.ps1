@@ -9,15 +9,15 @@
 #
 # name plays the role of `ps -o comm=` and commandline the role of `ps -o args=`
 # for the harness matcher. Bounded to 16 hops; stops at the first parent that is
-# not a live process (or a self/zero parent). All processes are fetched once so a
-# single CIM query serves the whole walk.
+# not a live process, is self/zero, or was created after its child. All processes
+# are fetched once so a single CIM query serves the whole walk.
 
 param([Parameter(Mandatory = $true)][int]$Start)
 
 $ErrorActionPreference = 'Stop'
 
 $byPid = @{}
-Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object {
+Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CommandLine,CreationDate -ErrorAction Stop | ForEach-Object {
   $byPid[[int]$_.ProcessId] = $_
 }
 
@@ -35,5 +35,11 @@ for ($hop = 0; $hop -lt 16; $hop++) {
   [Console]::Out.Write(('{0}{1}{2}{1}{3}' -f $p.ProcessId, $TAB, $name, $cmd) + "`n")
   $parent = [int]$p.ParentProcessId
   if ($parent -le 0 -or $parent -eq $cur) { break }
+  $parentProcess = $byPid[$parent]
+  if (-not $parentProcess) { break }
+  if ($p.CreationDate -and $parentProcess.CreationDate -and
+      ([datetime]$parentProcess.CreationDate -gt [datetime]$p.CreationDate)) {
+    break
+  }
   $cur = $parent
 }
