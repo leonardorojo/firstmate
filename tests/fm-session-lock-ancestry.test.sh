@@ -20,6 +20,7 @@ TMP_ROOT=$(fm_test_tmproot fm-session-lock-ancestry)
 fm_git_identity fmtest fmtest@example.invalid
 
 LIB="$ROOT/bin/fm-session-lock-lib.sh"
+unset FM_NATIVE_HARNESS_PID WIN_EXPECT_START
 
 # Claude Code's native installer names the per-session executable by its version,
 # so the harness identity has to survive a basename that says nothing.
@@ -64,8 +65,8 @@ matcher_eval() {  # <fakebin> <comm> <args>
 # Run one library expression on the Windows inspection path. The native data
 # seams are shadowed from fixtures (as lib_eval shadows kill): this shell's MSYS
 # pid, the MSYS logical process table, the Win32_Process ancestry walk, the
-# `ps -W` native table, and the /proc winpid fallback. WIN_MSYSSELF, WIN_MSYSPS,
-# WIN_CHAIN, WIN_PSW, and WIN_SELF are read from the environment.
+# Win32 process-info lookup, and the /proc winpid fallback. WIN_MSYSSELF,
+# WIN_MSYSPS, WIN_CHAIN, WIN_INFO, and WIN_SELF are read from the environment.
 win_eval() {  # <expression>
   local expr=$1
   FM_LOCK_PLATFORM=windows bash -c "
@@ -73,7 +74,16 @@ win_eval() {  # <expression>
     _fm_win_self_msyspid() { printf '%s\n' \"\$WIN_MSYSSELF\"; }
     _fm_win_ps() { cat \"\$WIN_MSYSPS\"; }
     _fm_win_walk_rows() { [ \"\$1\" = \"\${WIN_EXPECT_START:-100}\" ] && cat \"\$WIN_CHAIN\"; }
-    _fm_win_ps_w() { cat \"\$WIN_PSW\"; }
+    _fm_win_proc_info() {
+      local wanted=\"\$1\" pid comm args
+      while IFS=\$'\\t' read -r pid comm args; do
+        if [ \"\$pid\" = \"\$wanted\" ]; then
+          printf '%s\\t%s\\n' \"\$comm\" \"\$args\"
+          return 0
+        fi
+      done < \"\$WIN_INFO\"
+      return 1
+    }
     _fm_win_self_winpid() { printf '%s\n' \"\$WIN_SELF\"; }
     $expr
   " "$LIB"
@@ -367,19 +377,20 @@ win_fixture() {  # <dir>
     printf '%s\t%s\t%s\n' 300 cmd.exe 'C:\WINDOWS\system32\cmd.exe'
     printf '%s\t%s\t%s\n' 400 wezterm-gui.exe '"C:\Program Files\WezTerm\wezterm-gui.exe" start'
   } > "$dir/chain"
-  # ps -W table. STIME is two tokens ("Jul 30") on the claude row to prove the
-  # COMMAND starts after either one-token STIME (HH:MM:SS) or two-token STIME
-  # (MMM DD), and may be an MSYS path, drive-letter path, or bare native name.
-  # The parser must return all of those metadata forms while the harness matcher
-  # remains responsible for identity policy.
+  # Win32_Process rows preserve the executable name and the complete command line,
+  # including arguments after the script path. This is deliberately not a ps -W
+  # fixture, whose COMMAND column loses the Pi script argument on native Windows.
   {
-    printf '%s\n' '      PID    PPID    PGID     WINPID   TTY         UID    STIME COMMAND'
-    printf '%s\n' '  4217716       0       0        200   ?              0 Jul 30 C:\Users\u\AppData\Local\claude.exe'
-    printf '%s\n' '  4217717       0       0        201   ?              0 10:02:04 /c/Users/u/AppData/Local/claude.exe'
-    printf '%s\n' '  4217718       0       0        202   ?              0 10:02:05 C:\Users\u\AppData\Local\claude.exe'
-    printf '%s\n' '  4194308       0       0          4   ?              0 Jul 30 System'
-    printf '%s\n' '  4207384       0       0        101   ?              0 10:02:06 C:\Program Files\Git\usr\bin\bash.exe'
-  } > "$dir/psw"
+    printf '%s\t%s\t%s\n' 200 claude.exe 'C:\Users\u\AppData\Local\claude.exe'
+    printf '%s\t%s\t%s\n' 201 claude.exe '/c/Users/u/AppData/Local/claude.exe'
+    printf '%s\t%s\t%s\n' 202 claude.exe 'C:\Users\u\AppData\Local\claude.exe'
+    printf '%s\t%s\t%s\n' 4 System System
+    printf '%s\t%s\t%s\n' 101 bash.exe 'C:\Program Files\Git\usr\bin\bash.exe'
+    printf '%s\t%s\t%s\n' 500 node.exe '"C:\Program Files\nodejs\node.exe" "C:\Users\u\AppData\Roaming\npm\node_modules\@earendil-works\pi-coding-agent\dist\cli.js" --model test'
+    printf '%s\t%s\t%s\n' 501 node.exe '"C:\Program Files\nodejs\node.exe" "C:\tools\ordinary.js"'
+    printf '%s\t%s\t%s\n' 502 node.exe '"C:\Program Files\nodejs\node.exe" "C:\tools\ordinary.js" --note @earendil-works/pi-coding-agent'
+    printf '%s\t%s\t%s\n' 503 node.exe '"C:\Program Files\nodejs\node.exe" "C:/Users/u/AppData/Roaming/npm/node_modules/@earendil-works\pi-coding-agent/dist/cli.js" --model test'
+  } > "$dir/info"
   # MSYS logical process table: this subprocess (msys 50, winpid 3856 - orphaned,
   # never a valid Win32 walk start) under the topmost MSYS shell (msys 51, winpid
   # 100), which was spawned directly by the harness and whose winpid IS the valid
@@ -389,7 +400,7 @@ win_fixture() {  # <dir>
     printf '%s\n' '   50 51 50 3856 ? 197609 17:31 /usr/bin/bash'
     printf '%s\n' '   51 1 51 100 ? 197609 17:31 /usr/bin/bash'
   } > "$dir/msysps"
-  export WIN_MSYSSELF=50 WIN_MSYSPS="$dir/msysps" WIN_CHAIN="$dir/chain" WIN_PSW="$dir/psw" WIN_SELF=999
+  export WIN_MSYSSELF=50 WIN_MSYSPS="$dir/msysps" WIN_CHAIN="$dir/chain" WIN_INFO="$dir/info" WIN_SELF=999
 }
 
 test_windows_harness_is_found_beyond_the_bash_hops() {
@@ -435,17 +446,77 @@ test_windows_command_parser_handles_stime_width_and_path_forms() {
   win_fixture "$dir"
   info=$(win_eval '_fm_win_proc_info 200') \
     || fail "windows: two-token STIME drive-letter metadata was not parsed"
-  [ "$info" = $'C:\\Users\\u\\AppData\\Local\\claude.exe\tC:\\Users\\u\\AppData\\Local\\claude.exe' ] \
+  [ "$info" = $'claude.exe\tC:\\Users\\u\\AppData\\Local\\claude.exe' ] \
     || fail "windows: drive-letter metadata parsed as '$info'"
   info=$(win_eval '_fm_win_proc_info 201') \
     || fail "windows: one-token STIME MSYS metadata was not parsed"
-  [ "$info" = $'/c/Users/u/AppData/Local/claude.exe\t/c/Users/u/AppData/Local/claude.exe' ] \
+  [ "$info" = $'claude.exe\t/c/Users/u/AppData/Local/claude.exe' ] \
     || fail "windows: MSYS metadata parsed as '$info'"
   info=$(win_eval '_fm_win_proc_info 4') \
     || fail "windows: bare native metadata was not parsed"
   [ "$info" = $'System\tSystem' ] \
     || fail "windows: bare native metadata parsed as '$info'"
-  pass "session-lock: Windows COMMAND parsing follows STIME width for MSYS, drive, and bare names"
+  pass "session-lock: Windows process info preserves executable names and full command lines"
+}
+
+test_windows_explicit_native_host_pid_is_verified_before_use() {
+  local dir got
+  dir="$TMP_ROOT/win-explicit-host"
+  win_fixture "$dir"
+
+  got=$(FM_NATIVE_HARNESS_PID=500 win_eval '_fm_win_ancestry_start_winpid') \
+    || fail "windows: a live native Pi host pid was not accepted"
+  [ "$got" = 500 ] \
+    || fail "windows: valid native Pi host pid resolved '$got', expected 500"
+
+  got=$(FM_NATIVE_HARNESS_PID=503 win_eval '_fm_win_ancestry_start_winpid') \
+    || fail "windows: mixed slash/backslash native Pi host pid was not accepted"
+  [ "$got" = 503 ] \
+    || fail "windows: mixed slash/backslash native Pi host pid resolved '$got', expected 503"
+
+  for pid in 501 502 999999; do
+    got=$(FM_NATIVE_HARNESS_PID="$pid" win_eval '_fm_win_ancestry_start_winpid') \
+      || fail "windows: invalid explicit host pid $pid did not fall back"
+    [ "$got" = 100 ] \
+      || fail "windows: invalid explicit host pid $pid resolved '$got', expected MSYS bridge pid 100"
+  done
+
+  got=$(win_eval '_fm_win_ancestry_start_winpid') \
+    || fail "windows: absent explicit host pid did not use the MSYS bridge"
+  [ "$got" = 100 ] \
+    || fail "windows: absent explicit host pid resolved '$got', expected MSYS bridge pid 100"
+  pass "session-lock: explicit native host pids require live structural Pi identity and otherwise use the MSYS bridge"
+}
+
+test_windows_explicit_native_host_avoids_missing_parent_bash() {
+  local dir got
+  dir="$TMP_ROOT/win-explicit-missing-parent"
+  win_fixture "$dir"
+  printf '%s\t%s\t%s\n' 500 node.exe '"C:\Program Files\nodejs\node.exe" "C:\Users\u\AppData\Roaming\npm\node_modules\@earendil-works\pi-coding-agent\dist\cli.js"' > "$dir/pi-chain"
+  got=$(FM_NATIVE_HARNESS_PID=500 WIN_EXPECT_START=500 WIN_CHAIN="$dir/pi-chain" \
+    win_eval 'fm_harness_ancestry_pid') \
+    || fail "windows: valid explicit host pid did not bypass the missing-parent Bash bridge"
+  [ "$got" = 500 ] \
+    || fail "windows: explicit host pid with missing Bash parent resolved '$got', expected Pi pid 500"
+  pass "session-lock: a valid explicit native host remains usable when the transient Bash parent is missing"
+}
+
+test_windows_liveness_uses_full_win32_command_line_for_pi() {
+  local dir
+  dir="$TMP_ROOT/win-pi-live"
+  win_fixture "$dir"
+  win_eval 'fm_harness_pid_alive 500' \
+    || fail "windows: live Pi was not recognized from its full Win32 command line"
+  if win_eval 'fm_harness_pid_alive 501'; then
+    fail "windows: ordinary node script passed the Pi liveness predicate"
+  fi
+  if win_eval 'fm_harness_pid_alive 502'; then
+    fail "windows: Pi package text in a later user argument passed liveness"
+  fi
+  if win_eval 'fm_harness_pid_alive 999999'; then
+    fail "windows: dead or unresolvable native pid passed liveness"
+  fi
+  pass "session-lock: native Pi liveness uses the full Win32 command line and rejects node decoys"
 }
 
 test_windows_parent_newer_than_child_stops_the_walk() {
@@ -469,23 +540,27 @@ test_windows_parent_newer_than_child_stops_the_walk() {
   fi
   cat > "$driver" <<'PS'
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string]$Script)
+param([Parameter(Mandatory = $true)][string]$Script, [switch]$Info)
 
 function Get-CimInstance {
   [CmdletBinding()]
   param([Parameter(Position = 0)][string]$ClassName, [string[]]$Property)
-  [pscustomobject]@{ ProcessId = 100; ParentProcessId = 200; Name = 'child.exe'; CommandLine = 'child.exe'; CreationDate = [datetime]'2024-01-02T00:00:00' }
+  [pscustomobject]@{ ProcessId = 100; ParentProcessId = 200; Name = 'node.exe'; CommandLine = 'node.exe "C:\Program Files\nodejs\node.exe" "C:\Users\u\node_modules\@earendil-works\pi-coding-agent\dist\cli.js" --model test'; CreationDate = [datetime]'2024-01-02T00:00:00' }
   [pscustomobject]@{ ProcessId = 200; ParentProcessId = 300; Name = 'new-parent.exe'; CommandLine = 'new-parent.exe'; CreationDate = [datetime]'2024-01-03T00:00:00' }
   [pscustomobject]@{ ProcessId = 300; ParentProcessId = 0; Name = 'root.exe'; CommandLine = 'root.exe'; CreationDate = [datetime]'2024-01-01T00:00:00' }
 }
 
-& $Script -Start 100
+if ($Info) { & $Script -ProcessId 100 } else { & $Script -Start 100 }
 PS
   got=$("$powershell_cmd" -NoProfile -ExecutionPolicy Bypass -File "$driver" "$script" 2>&1 | tr -d '\r') \
     || fail "Windows ancestry fixture failed: $got"
-  [ "$got" = $'100\tchild.exe\tchild.exe' ] \
-    || fail "a parent newer than its child was traversed: '$got'"
-  pass "session-lock: Windows ancestry rejects a parent created after the child"
+  [ "$got" = $'100\tnode.exe\tnode.exe "C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\u\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js" --model test' ] \
+    || fail "a parent newer than its child was traversed or the full command line was lost: '$got'"
+  got=$("$powershell_cmd" -NoProfile -ExecutionPolicy Bypass -File "$driver" "$script" -Info 2>&1 | tr -d '\r') \
+    || fail "Windows process-info fixture failed: $got"
+  [ "$got" = $'100\tnode.exe\tnode.exe "C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\u\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js" --model test' ] \
+    || fail "the ProcessId lookup did not preserve the full command line: '$got'"
+  pass "session-lock: Windows ancestry and process info preserve Win32 command lines and creation-time safeguards"
 }
 
 test_windows_lock_above_the_harness_is_not_owned() {
@@ -674,6 +749,9 @@ test_competing_version_named_session_is_seen_as_live
 test_windows_harness_is_found_beyond_the_bash_hops
 test_windows_liveness_reads_the_native_process_table
 test_windows_command_parser_handles_stime_width_and_path_forms
+test_windows_explicit_native_host_pid_is_verified_before_use
+test_windows_explicit_native_host_avoids_missing_parent_bash
+test_windows_liveness_uses_full_win32_command_line_for_pi
 test_windows_parent_newer_than_child_stops_the_walk
 test_windows_lock_above_the_harness_is_not_owned
 test_windows_ancestry_start_bridges_msys_to_windows

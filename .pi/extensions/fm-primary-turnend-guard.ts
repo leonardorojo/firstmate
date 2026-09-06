@@ -272,6 +272,10 @@ function runSessionstartHook(generation: SessionstartGeneration): Promise<Sessio
         : spawnScript(runner, args, {
             detached: false,
             stdio: ["ignore", "pipe", "ignore"],
+            env: {
+              ...process.env,
+              FM_NATIVE_HARNESS_PID: String(process.pid),
+            },
           });
     } catch {
       settle(generation.stopping ? { kind: "cancelled" } : { kind: "failed" });

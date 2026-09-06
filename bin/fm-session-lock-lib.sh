@@ -169,12 +169,12 @@ fm_harness_process_matches() {  # <comm> <args>
 # Windows process tree (bash -> bash -> claude.exe) - is invisible, the ancestry
 # walk finds nothing, and every session refuses the home's lock as read-only.
 #
-# The fix is to read the true tree from a Windows-aware source while keeping the
-# harness-identity policy below unchanged. On Windows the ancestry comes from
-# Win32_Process (fm-win-ancestry.ps1) and liveness from `ps -W`, which does list
-# native processes with their Windows pids. Pids are reported in the platform's
-# own space - Unix pids on Unix, Windows pids (WINPID) on Windows - and the lock
-# stores whatever this layer reports, so every consumer compares like with like.
+# The fix is to read the true tree and native liveness from a Windows-aware
+# source while keeping the harness-identity policy below unchanged. On Windows
+# both come from Win32_Process (fm-win-ancestry.ps1), whose ProcessId values are
+# native Windows pids. Pids are reported in the platform's own space - Unix pids
+# on Unix, Windows pids on Windows - and the lock stores whatever this layer
+# reports, so every consumer compares like with like.
 
 # Selected process-inspection platform: "windows" or "unix". FM_LOCK_PLATFORM
 # overrides detection so either path is deterministic in tests and debugging.
@@ -199,8 +199,8 @@ _fm_lock_platform() {
 
 # Windows data sources, each a single seam a test can shadow (as the suite
 # already shadows `kill`): this shell's MSYS pid and Windows pid, the MSYS
-# logical process table, the Win32_Process ancestry walk from a start pid, and
-# the native-process table.
+# logical process table, the Win32_Process ancestry walk, and the Win32 process
+# info lookup.
 _fm_win_self_msyspid() { printf '%s\n' "$$"; }
 _fm_win_self_winpid() { cat "/proc/$$/winpid" 2>/dev/null; }
 _fm_win_ps() { ps 2>/dev/null; }
@@ -209,7 +209,22 @@ _fm_win_walk_rows() {  # <start-winpid> -> pid<TAB>name<TAB>commandline, innermo
   script="$(dirname -- "${BASH_SOURCE[0]}")/fm-win-ancestry.ps1"
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$script" -Start "$start" 2>/dev/null | tr -d '\r'
 }
-_fm_win_ps_w() { ps -W 2>/dev/null; }
+_fm_win_proc_info() {  # <winpid> -> comm<TAB>full-commandline
+  local pid=$1 script row
+  case "$pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  script="$(dirname -- "${BASH_SOURCE[0]}")/fm-win-ancestry.ps1"
+  row=$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$script" -ProcessId "$pid" 2>/dev/null | tr -d '\r') || return 1
+  printf '%s\n' "$row" | awk -F '\t' '
+    NF >= 3 && $1 ~ /^[0-9]+$/ {
+      printf "%s\t%s\n", $2, $3
+      found = 1
+      exit
+    }
+    END { if (!found) exit 1 }
+  '
+}
 
 # Emit the process ancestry innermost-first as: pid<TAB>comm<TAB>args, one row
 # per hop, bounded to 16 hops and stopping at the first unresolvable parent.
@@ -252,11 +267,26 @@ _fm_win_ancestry_rows() {
 # a Win32 walk from here stops at the first hop and never reaches the harness.
 # The MSYS ps table still records the logical parent chain though, and the
 # topmost MSYS shell in it was spawned directly by the harness (claude.exe ->
-# bash), so THAT shell keeps an intact Windows parent link. Climb the MSYS chain
-# to it and start the Win32 walk from its winpid. Fall back to this shell's own
-# winpid when the MSYS table cannot be read.
+# bash), so THAT shell keeps an intact Windows parent link. When the native host
+# supplies FM_NATIVE_HARNESS_PID, validate that live Win32 process first and use
+# it only for a verified harness. Invalid or absent values fall back to climbing
+# the MSYS chain and then to this shell's own winpid when the table cannot be read.
 _fm_win_ancestry_start_winpid() {
-  local top
+  local explicit info comm args top
+  explicit=${FM_NATIVE_HARNESS_PID:-}
+  case "$explicit" in
+    ''|*[!0-9]*|0) ;;
+    *)
+      if info=$(_fm_win_proc_info "$explicit") && [ -n "$info" ]; then
+        comm=${info%%$'\t'*}
+        args=${info#*$'\t'}
+        if fm_harness_process_matches "$comm" "$args"; then
+          printf '%s\n' "$explicit"
+          return 0
+        fi
+      fi
+      ;;
+  esac
   top=$(_fm_win_top_msys_winpid)
   if [ -n "$top" ]; then printf '%s\n' "$top"; return 0; fi
   _fm_win_self_winpid | tr -d '[:space:]'
@@ -279,36 +309,6 @@ _fm_win_top_msys_winpid() {
       }
       print win[top]
     }
-  '
-}
-
-# Look up a live Windows process by its WINPID in the native-process table.
-# Prints comm<TAB>args, using COMMAND for both fields, or returns 1 when the pid
-# is not present in the native-process table. `ps -W` columns are:
-#   PID PPID PGID WINPID TTY UID STIME COMMAND...
-# STIME is one token for recent processes (HH:MM or HH:MM:SS) and two for older
-# ones (MMM DD), so derive COMMAND's position from the STIME shape. Rejoining all
-# remaining fields preserves spaces in executable paths and also returns Cygwin /
-# MSYS paths, drive-letter paths, UNC paths, and bare native names. The parser
-# reports process metadata only; fm_harness_process_matches remains the sole
-# owner of harness identity policy.
-_fm_win_proc_info() {  # <winpid>
-  _fm_win_ps_w | awk -v w="$1" '
-    $4 == w {
-      if ($7 ~ /^[0-9][0-9]:[0-9][0-9](:[0-9][0-9])?$/) {
-        start = 8
-      } else if ($7 ~ /^[A-Z][a-z][a-z]$/ && $8 ~ /^[0-9][0-9]?$/) {
-        start = 9
-      } else {
-        next
-      }
-      cmd = ""
-      for (i = start; i <= NF; i++) cmd = cmd (i > start ? " " : "") $i
-      printf "%s\t%s\n", cmd, cmd
-      found = 1
-      exit
-    }
-    END { if (!found) exit 1 }
   '
 }
 

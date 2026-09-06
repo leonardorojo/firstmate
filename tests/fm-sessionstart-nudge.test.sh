@@ -450,8 +450,9 @@ while [ $# -gt 0 ]; do
 done
 count=$(( $(wc -l < "$state/launches" 2>/dev/null || printf '0') + 1 ))
 behavior=$(cat "$state/behavior-$count")
-printf 'launch:%s:%s:%s:%s:%s\n' \
-  "$count" "$behavior" "$source_name" "$$" "${FM_SESSIONSTART_SUPERVISOR_PID:-}" >> "$state/launches"
+printf 'launch:%s:%s:%s:%s:%s:%s\n' \
+  "$count" "$behavior" "$source_name" "$$" "${FM_SESSIONSTART_SUPERVISOR_PID:-}" \
+  "${FM_NATIVE_HARNESS_PID:-}" >> "$state/launches"
 printf 'launch:%s\n' "$count" >> "$state/events"
 case "$behavior" in
   success)
@@ -515,7 +516,7 @@ SH
   : > "$fixture/state/events"
 
   out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
-    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
+    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" FM_NATIVE_HARNESS_PID=INHERITED \
     node --input-type=module 2>&1 <<'JS'
 import {
   existsSync,
@@ -527,6 +528,7 @@ import { pathToFileURL } from "node:url";
 
 const state = `${process.env.FM_HOME}/state`;
 const runner = `${process.env.FM_HOME}/bin/fm-sessionstart-run.sh`;
+const isWindows = process.platform === "win32";
 const handlers = new Map();
 const sent = [];
 const pi = {
@@ -578,6 +580,7 @@ const release = (index) => writeFileSync(`${state}/release-${index}`, "\n");
 const launchLines = () => readFileSync(`${state}/launches`, "utf8").trim().split("\n").filter(Boolean);
 const pidFor = (index) => Number(launchLines().find((line) => line.startsWith(`launch:${index}:`))?.split(":")[4]);
 const supervisorFor = (index) => Number(launchLines().find((line) => line.startsWith(`launch:${index}:`))?.split(":")[5]);
+const nativePidFor = (index) => launchLines().find((line) => line.startsWith(`launch:${index}:`))?.split(":")[6] ?? "";
 const grandchildFor = (index) => Number(readFileSync(`${state}/grandchild-${index}`, "utf8").trim());
 const startupMessages = () => providerCalls.map((call) => call.message).filter(Boolean);
 
@@ -593,6 +596,8 @@ release(1);
 const immediateResult = await immediateCall;
 assert(immediateResult?.message?.content.includes("GENERATION_DIGEST_1"), "first payload lost matching startup context");
 assert(launchLines().length === 1, "immediate generation executed more than once");
+assert(nativePidFor(1) === (process.platform === "win32" ? String(process.pid) : "INHERITED"),
+  "session-start child received the wrong native host pid contract");
 assert((await handlers.get("before_agent_start")({ prompt: "second prompt" }, immediate)) === undefined,
   "one generation delivered startup context more than once");
 assert(startupMessages().length === 1, "immediate generation produced more than one model-visible startup context");
@@ -607,20 +612,22 @@ const provenResult = await providerCall(proven, "proven prompt");
 assert(provenResult?.message?.content.includes("GENERATION_DIGEST_2"), "proven path lost startup context");
 assert(!provenResult.message.content.includes("Run `bin/fm-session-start.sh`"), "proven path used manual fallback");
 const provenSupervisor = supervisorFor(2);
-assert(alive(provenSupervisor), "completed generation lost its stable supervisor owner");
+if (!isWindows) assert(alive(provenSupervisor), "completed generation lost its stable supervisor owner");
 const originalKill = process.kill;
 let ownedGroupSignalCount = 0;
-process.kill = (pid, signal) => {
-  if (pid === -provenSupervisor && signal !== 0) ownedGroupSignalCount += 1;
-  return Reflect.apply(originalKill, process, [pid, signal]);
-};
+if (!isWindows) {
+  process.kill = (pid, signal) => {
+    if (pid === -provenSupervisor && signal !== 0) ownedGroupSignalCount += 1;
+    return Reflect.apply(originalKill, process, [pid, signal]);
+  };
+}
 
 // Shutdown owns interruption and the whole child process group. The pending
 // preflight settles without stale delivery.
 plan(3, "slow");
 const interrupted = begin("new", "session-interrupted");
 process.kill = originalKill;
-assert(ownedGroupSignalCount > 0, "replacement did not retire the completed generation's stable owner");
+if (!isWindows) assert(ownedGroupSignalCount > 0, "replacement did not retire the completed generation's stable owner");
 await waitFor(() => existsSync(`${state}/started-3`) && existsSync(`${state}/grandchild-3`),
   "interrupted generation never started its process tree");
 const interruptedCall = handlers.get("before_agent_start")({ prompt: "interrupted" }, interrupted);
