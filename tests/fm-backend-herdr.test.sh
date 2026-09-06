@@ -3000,7 +3000,7 @@ test_current_path_reads_cwd() {
   pass "fm_backend_herdr_current_path: reads pane foreground_cwd (the live running process), not the frozen creation-time cwd"
 }
 
-test_git_top_level_uses_bounded_sentinel_protocol() {
+test_git_top_level_parser_accepts_bounded_sentinel_protocol() {
   local dir query_log output out
   dir="$TMP_ROOT/git-top-level-query"; mkdir -p "$dir"
   query_log="$dir/query.log"; output="$dir/output"
@@ -3019,6 +3019,8 @@ test_git_top_level_uses_bounded_sentinel_protocol() {
       FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
     ' "$ROOT")
   [ "$out" = "/tmp/worktree with spaces" ] || fail "sentinel query did not return the Git root with spaces, got '$out'"
+  assert_contains "$(cat "$query_log")" 'cmd.exe /d /s /c' \
+    "sentinel query did not invoke the foreground shell through cmd.exe"
   assert_contains "$(cat "$query_log")" 'git rev-parse --show-toplevel' \
     "sentinel query did not ask the pane shell for the authoritative Git root"
   printf '%s\n' 'FM_QUERY_BEGIN' 'too many' 'lines' 'FM_QUERY_END' > "$output"
@@ -3041,7 +3043,86 @@ test_git_top_level_uses_bounded_sentinel_protocol() {
   ' "$ROOT" >/dev/null 2>&1; then
     fail "sentinel query accepted output without its markers"
   fi
-  pass "fm_backend_herdr_git_top_level: accepts only one sentinel-delimited Git-root line and bounds polling"
+  printf '%s\n' 'FM_QUERY_BEGIN' '/tmp/first-root' 'FM_QUERY_END' \
+    'FM_QUERY_BEGIN' '/tmp/second-root' 'FM_QUERY_END' > "$output"
+  if FM_HERDR_QUERY_OUTPUT="$output" bash -c '
+    . "$0/bin/backends/herdr.sh"
+    fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+    fm_backend_herdr_send_text_line() { :; }
+    fm_backend_herdr_capture() { cat "$FM_HERDR_QUERY_OUTPUT"; }
+    FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
+  ' "$ROOT" >/dev/null 2>&1; then
+    fail "sentinel query accepted multiple sentinel-delimited roots"
+  fi
+  pass "fm_backend_herdr_git_top_level: parser accepts only one sentinel-delimited Git-root line and bounds polling"
+}
+
+test_git_top_level_real_cmd_execution_when_available() {
+  local dir repo nonrepo script native_repo native_script output raw actual expected status
+  if ! command -v cmd.exe >/dev/null 2>&1 || ! command -v cygpath >/dev/null 2>&1; then
+    echo "skip: real Windows cmd.exe query regression requires cmd.exe and cygpath"
+    return 0
+  fi
+  if ! cmd.exe /d /s /c exit 0 >/dev/null 2>&1; then
+    echo "skip: real Windows cmd.exe is present but cannot be executed"
+    return 0
+  fi
+
+  dir="$TMP_ROOT/git-top-level-real-cmd"
+  repo="$dir/repo with spaces"
+  nonrepo="$dir/not a git repo"
+  script="$dir/query.cmd"
+  native_repo=$(cygpath -w -- "$repo") \
+    || fail "could not convert the real cmd.exe fixture repo to a native path"
+  native_script=$(cygpath -w -- "$script") \
+    || fail "could not convert the real cmd.exe query script to a native path"
+  output="$dir/query-output"
+  mkdir -p "$nonrepo"
+  fm_git_init_commit "$repo"
+  expected=$(cd "$repo" && pwd -P) || fail "could not resolve the real cmd.exe fixture repo"
+
+  status=0
+  (
+    . "$ROOT/bin/backends/herdr.sh"
+    fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+    fm_backend_herdr_send_text_line() {
+      printf '@echo off\ncd /d "%s"\n%s\n' \
+        "$FM_REAL_CMD_NATIVE_REPO" "$2" > "$FM_REAL_CMD_SCRIPT"
+      cmd.exe //d //s //c "call $FM_REAL_CMD_NATIVE_SCRIPT" \
+        > "$FM_REAL_CMD_OUTPUT" 2>&1
+    }
+    fm_backend_herdr_capture() { cat "$FM_REAL_CMD_OUTPUT"; }
+    FM_REAL_CMD_NATIVE_REPO="$native_repo" FM_REAL_CMD_NATIVE_SCRIPT="$native_script" \
+      FM_REAL_CMD_SCRIPT="$script" FM_REAL_CMD_OUTPUT="$output" \
+      FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 \
+      fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
+  ) > "$dir/valid-root" 2> "$dir/valid-error" || status=$?
+  expect_code 0 "$status" "real cmd.exe query should return the Git root"
+  raw=$(cat "$dir/valid-root")
+  actual=$(cygpath -u -- "$raw" 2>/dev/null) \
+    || fail "could not convert the real cmd.exe Git root back to an MSYS path"
+  [ "$actual" = "$expected" ] \
+    || fail "real cmd.exe query returned '$raw', expected the spaced repo '$expected'"
+
+  if (
+    . "$ROOT/bin/backends/herdr.sh"
+    fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+    fm_backend_herdr_send_text_line() {
+      printf '@echo off\ncd /d "%s"\n%s\n' \
+        "$FM_REAL_CMD_NATIVE_REPO" "$2" > "$FM_REAL_CMD_SCRIPT"
+      cmd.exe //d //s //c "call $FM_REAL_CMD_NATIVE_SCRIPT" \
+        > "$FM_REAL_CMD_OUTPUT" 2>&1
+    }
+    fm_backend_herdr_capture() { cat "$FM_REAL_CMD_OUTPUT"; }
+    FM_REAL_CMD_NATIVE_REPO="$(cygpath -w -- "$nonrepo")" \
+      FM_REAL_CMD_NATIVE_SCRIPT="$native_script" FM_REAL_CMD_SCRIPT="$script" \
+      FM_REAL_CMD_OUTPUT="$output" \
+      FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 \
+      fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
+  ); then
+    fail "real cmd.exe query accepted a failed git rev-parse"
+  fi
+  pass "fm_backend_herdr_git_top_level: real cmd.exe preserves spaced paths and rejects failed Git queries"
 }
 
 # --- busy_state (semantic agent state) ---------------------------------------
@@ -4639,7 +4720,8 @@ test_capture_preserves_pane_read_failure
 test_send_key_normalizes_and_targets_pane
 test_kill_is_best_effort
 test_current_path_reads_cwd
-test_git_top_level_uses_bounded_sentinel_protocol
+test_git_top_level_parser_accepts_bounded_sentinel_protocol
+test_git_top_level_real_cmd_execution_when_available
 test_busy_state_working_maps_to_busy
 test_busy_state_done_and_blocked_map_to_idle
 test_busy_state_unknown_on_no_agent

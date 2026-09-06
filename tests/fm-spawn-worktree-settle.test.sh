@@ -61,7 +61,8 @@ SH
 # make_windows_herdr_fakebin <dir> builds a small Herdr protocol fixture for
 # the native-Windows fallback tests. The pane's structured cwd stays empty,
 # while the fake shell emits the requested Git root only after the sentinel
-# query is submitted.
+# query is submitted. This is protocol/parser coverage only; the separate real
+# cmd.exe regression below is the shell-syntax coverage.
 make_windows_herdr_fakebin() {
   local dir=$1 fakebin="$1/fakebin"
   mkdir -p "$fakebin"
@@ -98,7 +99,8 @@ case "${1:-} ${2:-}" in
     ;;
   "pane run")
     command_text=${*:3}
-    if [[ "$command_text" == *'git rev-parse --show-toplevel'* ]]; then
+    if [[ "$command_text" == *'cmd.exe /d /s /c'* ]] \
+       && [[ "$command_text" == *'git rev-parse --show-toplevel'* ]]; then
       marker=$(printf '%s' "$command_text" | grep -oE 'FM_GIT_TOPLEVEL_[A-Za-z0-9_]+' | head -1 || true)
       case "${FM_FAKE_HERDR_QUERY_MODE:-valid}" in
         valid) printf '\n%s_BEGIN\n%s\n%s_END\n' "$marker" "$root" "$marker" >> "$capture" ;;

@@ -2555,7 +2555,12 @@ fm_backend_herdr_git_top_level() {  # <target> <marker>
   local interval=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_INTERVAL:-0.1}
   case "$max" in ''|*[!0-9]*|0) max=3 ;; esac
   case "$interval" in ''|*[!0-9.]*|0) interval=0.1 ;; esac
-  command_text="\$root = git rev-parse --show-toplevel 2>\$null; if (\$LASTEXITCODE -eq 0 -and \$root) { Write-Output '$begin'; Write-Output \$root; Write-Output '$end' }"
+  # Herdr's pane run submits into whichever shell is foreground. Treehouse can
+  # leave that shell as a nested cmd.exe even when the pane was launched from
+  # PowerShell, so keep the query in cmd syntax and invoke cmd explicitly.
+  # The first invocation gates the sentinel block on a successful Git query;
+  # the second emits the one authoritative root line without prompt parsing.
+  command_text="cmd.exe /d /s /c \"git rev-parse --show-toplevel >nul 2>&1 && (echo $begin&git rev-parse --show-toplevel 2>nul&echo $end)\""
   FM_BACKEND_HERDR_RPC_TIMEOUT=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_RPC_TIMEOUT:-2} \
     fm_backend_herdr_send_text_line "$target" "$command_text" || return 1
   while [ "$i" -lt "$max" ]; do
