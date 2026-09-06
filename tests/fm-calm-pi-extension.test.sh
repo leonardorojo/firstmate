@@ -87,6 +87,7 @@ test_home_resolution() {
   fixture="$TMP_ROOT/home-resolution"
   mkdir -p \
     "$fixture/project/.pi/extensions/lib" \
+    "$fixture/project/bin" \
     "$fixture/project/node_modules/@earendil-works" \
     "$fixture/override" \
     "$fixture/launch-cwd"
@@ -96,6 +97,7 @@ test_home_resolution() {
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$fixture/project/bin/fm-script-launcher.mjs"
   ln -s "$PI_PACKAGE_DIR" "$fixture/project/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/project/node_modules/@earendil-works/pi-tui"
   ln -s "$PI_PACKAGE_DIR/node_modules/typebox" "$fixture/project/node_modules/typebox"
@@ -211,6 +213,7 @@ test_pi_compat_degraded_adapter() {
   fixture="$TMP_ROOT/degraded-adapter"
   mkdir -p \
     "$fixture/project/.pi/extensions/lib" \
+    "$fixture/project/bin" \
     "$fixture/project/node_modules/@earendil-works"
   cp "$EXT" "$fixture/project/.pi/extensions/fm-calm.ts"
   cp "$ASSISTANT_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-assistant-layout.ts"
@@ -218,6 +221,7 @@ test_pi_compat_degraded_adapter() {
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$fixture/project/bin/fm-script-launcher.mjs"
   ln -s "$PI_PACKAGE_DIR" "$fixture/project/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/project/node_modules/@earendil-works/pi-tui"
   ln -s "$PI_PACKAGE_DIR/node_modules/typebox" "$fixture/project/node_modules/typebox"
@@ -311,12 +315,14 @@ test_pi_compat_missing_adapter_exports() {
   fixture="$TMP_ROOT/missing-adapter-exports"
   mkdir -p \
     "$fixture/project/.pi/extensions/lib" \
+    "$fixture/project/bin" \
     "$fixture/project/node_modules/@earendil-works/pi-coding-agent"
   cp "$ASSISTANT_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$fixture/project/bin/fm-script-launcher.mjs"
   printf '%s\n' '{"type":"module"}' >"$fixture/project/package.json"
   printf '%s\n' \
     '{"name":"@earendil-works/pi-coding-agent","type":"module","exports":"./index.js"}' \
@@ -368,6 +374,7 @@ test_builtin_gate_load_time() {
   fixture="$TMP_ROOT/gate-load-time"
   mkdir -p \
     "$fixture/project/.pi/extensions/lib" \
+    "$fixture/project/bin" \
     "$fixture/project/node_modules/@earendil-works" \
     "$fixture/home-off/config" \
     "$fixture/home-on/config"
@@ -377,6 +384,7 @@ test_builtin_gate_load_time() {
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$fixture/project/bin/fm-script-launcher.mjs"
   ln -s "$PI_PACKAGE_DIR" "$fixture/project/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/project/node_modules/@earendil-works/pi-tui"
   ln -s "$PI_PACKAGE_DIR/node_modules/typebox" "$fixture/project/node_modules/typebox"
@@ -455,6 +463,7 @@ test_calm_activation_collision_and_regression_bound() {
   fixture="$TMP_ROOT/activation-collision"
   mkdir -p \
     "$fixture/project/.pi/extensions/lib" \
+    "$fixture/project/bin" \
     "$fixture/project/node_modules/@earendil-works" \
     "$fixture/home/config"
   cp "$EXT" "$fixture/project/.pi/extensions/fm-calm.ts"
@@ -463,6 +472,7 @@ test_calm_activation_collision_and_regression_bound() {
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$fixture/project/bin/fm-script-launcher.mjs"
   ln -s "$PI_PACKAGE_DIR" "$fixture/project/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/project/node_modules/@earendil-works/pi-tui"
   ln -s "$PI_PACKAGE_DIR/node_modules/typebox" "$fixture/project/node_modules/typebox"
@@ -670,14 +680,16 @@ test_rendering_and_session_lifecycle() {
   record_pi_version_evidence "$version" "Pi calm compatibility assumptions"
 
   fixture="$TMP_ROOT/renderer"
-  mkdir -p "$fixture/home" "$fixture/lib" "$fixture/node_modules/@earendil-works"
+  mkdir -p "$fixture/home" "$fixture/lib" "$fixture/bin" "$fixture/node_modules/@earendil-works"
   cp "$EXT" "$fixture/fm-calm.ts"
   cp "$ASSISTANT_LAYOUT" "$fixture/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$fixture/lib/fm-calm-working-ship.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/lib/fm-operational-input.ts"
-  cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$fixture/lib/fm-script-launcher.mjs"
+  sed -i.bak 's#../../../bin/fm-script-launcher.mjs#../bin/fm-script-launcher.mjs#' "$fixture/lib/fm-operational-input.ts"
+  rm -f "$fixture/lib/fm-operational-input.ts.bak"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$fixture/bin/fm-script-launcher.mjs"
   cp "$ROOT/.pi/extensions/lib/fm-branch-dispatch.ts" "$fixture/lib/fm-branch-dispatch.ts"
   cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$fixture/lib/fm-async-exec.ts"
   cp "$WATCH_EXT" "$fixture/fm-primary-pi-watch.ts"
@@ -1373,13 +1385,16 @@ test_calm_mid_turn_working_notes() {
   record_pi_version_evidence "$version" "Pi calm mid-turn presentation"
 
   fixture="$TMP_ROOT/calm-mid-turn"
-  mkdir -p "$fixture/home" "$fixture/lib" "$fixture/node_modules/@earendil-works"
+  mkdir -p "$fixture/home" "$fixture/lib" "$fixture/bin" "$fixture/node_modules/@earendil-works"
   cp "$EXT" "$fixture/fm-calm.ts"
   cp "$ASSISTANT_LAYOUT" "$fixture/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$fixture/lib/fm-calm-working-ship.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/lib/fm-operational-input.ts"
+  sed -i.bak 's#../../../bin/fm-script-launcher.mjs#../bin/fm-script-launcher.mjs#' "$fixture/lib/fm-operational-input.ts"
+  rm -f "$fixture/lib/fm-operational-input.ts.bak"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$fixture/bin/fm-script-launcher.mjs"
   ln -s "$PI_PACKAGE_DIR" "$fixture/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/node_modules/@earendil-works/pi-tui"
   ln -s "$PI_PACKAGE_DIR/node_modules/typebox" "$fixture/node_modules/typebox"
@@ -1632,7 +1647,7 @@ test_operational_followup_turn_e2e() {
   home="$TMP_ROOT/followup-home"
   config="$TMP_ROOT/followup-config"
   sessions="$TMP_ROOT/followup-sessions"
-  mkdir -p "$project/.pi/extensions/lib" "$home/config" "$config" "$sessions"
+  mkdir -p "$project/.pi/extensions/lib" "$project/bin" "$home/config" "$config" "$sessions"
   fm_git_init_commit "$project"
   cp "$EXT" "$project/.pi/extensions/fm-calm.ts"
   cp "$ASSISTANT_LAYOUT" "$project/.pi/extensions/lib/fm-calm-assistant-layout.ts"
@@ -1640,6 +1655,7 @@ test_operational_followup_turn_e2e() {
   cp "$VISIBILITY" "$project/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$PI_OPERATIONAL_INPUT" "$project/.pi/extensions/lib/fm-operational-input.ts"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$project/bin/fm-script-launcher.mjs"
   printf '%s\n' '{"followUpMode":"all"}' >"$config/settings.json"
 
   cat >"$project/followup-e2e.ts" <<'TS'
@@ -2003,6 +2019,7 @@ test_hidden_block_geometry_e2e() {
   cp "$VISIBILITY" "$project/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$PI_OPERATIONAL_INPUT" "$project/.pi/extensions/lib/fm-operational-input.ts"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$project/bin/fm-script-launcher.mjs"
   printf '%s\n' on >"$home/config/calm"
   printf '%s\n' '{"hideThinkingBlock":true,"terminal":{"clearOnShrink":false}}' >"$config/settings.json"
   printf '%s\n' 'tool result one' >"$project/probe-one.txt"
@@ -2228,13 +2245,16 @@ test_working_ship_geometry_and_lifecycle() {
   record_pi_version_evidence "$version" "Pi Calm working-ship assumptions"
 
   fixture="$TMP_ROOT/working-ship"
-  mkdir -p "$fixture/home" "$fixture/lib" "$fixture/node_modules/@earendil-works"
+  mkdir -p "$fixture/home" "$fixture/lib" "$fixture/bin" "$fixture/node_modules/@earendil-works"
   cp "$EXT" "$fixture/fm-calm.ts"
   cp "$ASSISTANT_LAYOUT" "$fixture/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$fixture/lib/fm-calm-working-ship.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/lib/fm-operational-input.ts"
+  sed -i.bak 's#../../../bin/fm-script-launcher.mjs#../bin/fm-script-launcher.mjs#' "$fixture/lib/fm-operational-input.ts"
+  rm -f "$fixture/lib/fm-operational-input.ts.bak"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$fixture/bin/fm-script-launcher.mjs"
   ln -s "$PI_PACKAGE_DIR" "$fixture/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/node_modules/@earendil-works/pi-tui"
   ln -s "$PI_PACKAGE_DIR/node_modules/typebox" "$fixture/node_modules/typebox"
@@ -3127,7 +3147,7 @@ test_interactive_terminal_e2e() {
   cp "$VISIBILITY" "$project/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$project/.pi/extensions/lib/fm-operational-input.ts"
-  cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$project/.pi/extensions/lib/fm-script-launcher.mjs"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$project/bin/fm-script-launcher.mjs"
   cp "$ROOT/.pi/extensions/lib/fm-branch-dispatch.ts" "$project/.pi/extensions/lib/fm-branch-dispatch.ts"
   cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$project/.pi/extensions/lib/fm-async-exec.ts"
   cp "$WATCH_EXT" "$project/.pi/extensions/fm-primary-pi-watch.ts"

@@ -177,7 +177,7 @@ run_native_ahoy_regressions() {
   git init -q "$AHOY_PROJECT"
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$AHOY_PROJECT/.pi/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$AHOY_PROJECT/.pi/extensions/lib/"
-  cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$AHOY_PROJECT/.pi/extensions/lib/fm-script-launcher.mjs"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$AHOY_PROJECT/bin/fm-script-launcher.mjs"
   cp \
     "$ROOT/bin/fm-sessionstart-nudge.sh" \
     "$ROOT/bin/fm-primary-scope-lib.sh" \
@@ -249,7 +249,7 @@ mkdir -p "$LAB"
 git clone -q "$ROOT" "$PROJECT"
 run_ahoy_transcript_regressions
 run_native_ahoy_regressions
-mkdir -p "$PROJECT/.pi/extensions/lib"
+mkdir -p "$PROJECT/.pi/extensions/lib" "$PROJECT/bin"
 cp "$ROOT/.pi/extensions/fm-calm.ts" "$PROJECT/.pi/extensions/fm-calm.ts"
 cp "$ROOT/.pi/extensions/fm-primary-pi-watch.ts" "$PROJECT/.pi/extensions/fm-primary-pi-watch.ts"
 cp "$ROOT/.pi/extensions/lib/fm-calm-assistant-layout.ts" "$PROJECT/.pi/extensions/lib/fm-calm-assistant-layout.ts"
@@ -259,7 +259,7 @@ cp "$ROOT/.pi/extensions/lib/fm-calm-working-ship.ts" "$PROJECT/.pi/extensions/l
 cp "$ROOT/.pi/extensions/lib/fm-branch-dispatch.ts" "$PROJECT/.pi/extensions/lib/fm-branch-dispatch.ts"
 cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$PROJECT/.pi/extensions/lib/fm-async-exec.ts"
 cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$PROJECT/.pi/extensions/lib/fm-operational-input.ts"
-cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$PROJECT/.pi/extensions/lib/fm-script-launcher.mjs"
+cp "$ROOT/bin/fm-script-launcher.mjs" "$PROJECT/bin/fm-script-launcher.mjs"
 cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$PROJECT/.pi/extensions/fm-primary-turnend-guard.ts"
 cp "$ROOT/bin/fm-watch-arm.sh" "$PROJECT/bin/fm-watch-arm.sh"
 cp "$ROOT/bin/fm-operational-input.sh" "$PROJECT/bin/fm-operational-input.sh"

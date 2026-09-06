@@ -174,11 +174,11 @@ SH
     claude) mkdir -p "$lab/.claude"; cp "$ROOT/.claude/settings.json" "$lab/.claude/settings.json" ;;
     codex) mkdir -p "$lab/.codex"; cp "$ROOT/.codex/hooks.json" "$lab/.codex/hooks.json" ;;
     pi)
-      mkdir -p "$lab/.pi/extensions/lib"
+      mkdir -p "$lab/.pi/extensions/lib" "$lab/bin"
       cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$lab/.pi/extensions/"
       cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" \
         "$ROOT/.pi/extensions/lib/fm-sessionstart-supervisor.mjs" "$lab/.pi/extensions/lib/"
-      cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$lab/.pi/extensions/lib/fm-script-launcher.mjs"
+      cp "$ROOT/bin/fm-script-launcher.mjs" "$lab/bin/fm-script-launcher.mjs"
       cp "$ROOT/bin/fm-operational-input.sh" "$lab/bin/"
       printf '%s\n' '{"compaction":{"keepRecentTokens":200}}' > "$lab/.pi/settings.json"
       ;;
@@ -355,7 +355,7 @@ probe_pi_sessionstart_prerequisite() {
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$project/.pi/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" \
     "$ROOT/.pi/extensions/lib/fm-sessionstart-supervisor.mjs" "$project/.pi/extensions/lib/"
-  cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$project/.pi/extensions/lib/fm-script-launcher.mjs"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$project/bin/fm-script-launcher.mjs"
   cp "$ROOT/bin/fm-operational-input.sh" "$project/bin/"
   cat > "$project/bin/fm-turnend-guard.sh" <<'SH'
 #!/usr/bin/env bash

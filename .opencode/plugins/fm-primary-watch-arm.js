@@ -1,7 +1,8 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.js";
+import { spawnScriptSync } from "../../bin/fm-script-launcher.mjs";
 
 const COORDINATOR_KEY = "__firstmateOpenCodeWatchArm";
 // 35s on Windows so the budget stays above arm's MSYS confirm default (30s in
@@ -196,9 +197,9 @@ async function sendPrompt(paths, client, sessionID, text) {
 
 function confirmHandlingDelivery(paths, recovery) {
   try {
-    const result = spawnSync(
-      "bash",
-      [`${paths.root}/bin/fm-watch-arm.sh`, "--handling-delivered", recovery.generation, "--watcher-pid", recovery.watcherPid],
+    const result = spawnScriptSync(
+      `${paths.root}/bin/fm-watch-arm.sh`,
+      ["--handling-delivered", recovery.generation, "--watcher-pid", recovery.watcherPid],
       {
         cwd: paths.root,
         encoding: "utf8",

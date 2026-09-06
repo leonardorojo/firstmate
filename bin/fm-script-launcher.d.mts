@@ -1,4 +1,4 @@
-import type { ChildProcessWithoutNullStreams, SpawnOptions, SpawnSyncOptions, SpawnSyncReturns } from "node:child_process";
+import type { ChildProcess, SpawnOptions, SpawnSyncOptions, SpawnSyncReturns } from "node:child_process";
 
 export function scriptInvocation(
   script: string,
@@ -10,7 +10,7 @@ export function spawnScript(
   script: string,
   args?: readonly string[],
   options?: SpawnOptions,
-): ChildProcessWithoutNullStreams;
+): ChildProcess;
 
 export function spawnScriptSync(
   script: string,

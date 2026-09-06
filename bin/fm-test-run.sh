@@ -1259,8 +1259,9 @@ families_for_changed_path() {
       # a real Pi TUI can answer, so the live guards are selected too.
       printf '%s\n' live-harness-optin
       ;;
-    .pi/extensions/lib/fm-script-launcher.mjs|.pi/extensions/lib/fm-script-launcher.d.mts)
+    bin/fm-script-launcher.mjs|bin/fm-script-launcher.d.mts)
       printf '%s\n' __script__:fm-script-launcher.test.sh
+      printf '%s\n' __script__:fm-operational-input.test.sh
       printf '%s\n' __script__:fm-pi-primary-types.test.sh
       printf '%s\n' __script__:fm-session-start.test.sh
       printf '%s\n' __script__:fm-sessionstart-nudge.test.sh

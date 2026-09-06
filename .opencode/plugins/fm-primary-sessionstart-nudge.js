@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
-import { spawnScript } from "../../.pi/extensions/lib/fm-script-launcher.mjs";
+import { spawnScript } from "../../bin/fm-script-launcher.mjs";
 
 const handledSessions = new Set();
 

@@ -8,7 +8,7 @@ import {
   classifyFirstmateCurrentOperationalText,
   encodeFirstmateOperationalInput,
 } from "./lib/fm-operational-input.ts";
-import { spawnScript } from "./lib/fm-script-launcher.mjs";
+import { spawnScript } from "../../bin/fm-script-launcher.mjs";
 
 let guardFollowupActive = false;
 
@@ -445,12 +445,12 @@ function runGuard(): Promise<{ code: number; stderr: string }> {
       stdio: ["pipe", "ignore", "pipe"],
     });
     let stderr = "";
-    child.stderr.on("data", (chunk) => {
+    child.stderr!.on("data", (chunk) => {
       stderr += chunk.toString();
     });
     child.on("error", () => resolveResult({ code: 0, stderr: "" }));
     child.on("close", (code) => resolveResult({ code: code ?? 0, stderr }));
-    child.stdin.end('{"stop_hook_active":false}');
+    child.stdin!.end('{"stop_hook_active":false}');
   });
 }
 
@@ -467,7 +467,7 @@ function runChecker(script: string, command: string): Promise<{ code: number; st
       stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";
-    child.stderr.on("data", (chunk) => {
+    child.stderr!.on("data", (chunk) => {
       stderr += chunk.toString();
     });
     child.on("error", () => resolveResult({ code: 0, stderr: "" }));

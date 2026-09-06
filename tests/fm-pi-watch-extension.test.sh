@@ -28,6 +28,7 @@ install_pi_watch_extension_fixture() {
   local repo=$1
   mkdir -p \
     "$repo/.pi/extensions/lib" \
+    "$repo/bin" \
     "$repo/node_modules/@earendil-works/pi-coding-agent" \
     "$repo/node_modules/@earendil-works/pi-tui" \
     "$repo/node_modules/typebox"
@@ -36,7 +37,7 @@ install_pi_watch_extension_fixture() {
   cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$repo/.pi/extensions/lib/fm-async-exec.ts"
   cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$repo/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
-  cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$repo/.pi/extensions/lib/fm-script-launcher.mjs"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$repo/bin/fm-script-launcher.mjs"
   mkdir -p "$repo/bin"
   cp "$ROOT/bin/fm-operational-input.sh" "$repo/bin/fm-operational-input.sh"
   chmod +x "$repo/bin/fm-operational-input.sh"
@@ -3010,7 +3011,8 @@ test_opencode_plugin_package_boundary_is_explicit_esm() {
   cp "$ROOT/.opencode/plugins/package.json" "$fixture/plugins/package.json"
   cp "$ROOT/.opencode/plugins/fm-primary-watch-arm.js" "$plugin"
   cp "$ROOT/.opencode/plugins/lib/fm-operational-input.js" "$fixture/plugins/lib/fm-operational-input.js"
-  cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$fixture/../.pi/extensions/lib/fm-script-launcher.mjs"
+  mkdir -p "$fixture/../bin"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$fixture/../bin/fm-script-launcher.mjs"
   out=$(PLUGIN="$plugin" node --input-type=module 2>&1 <<'EOF'
 import { pathToFileURL } from "node:url";
 await import(pathToFileURL(process.env.PLUGIN).href);

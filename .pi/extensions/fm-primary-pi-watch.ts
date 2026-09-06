@@ -40,6 +40,7 @@ import {
   FIRSTMATE_CALM_PRESENTATION_EVENT,
 } from "./lib/fm-calm-visibility.ts";
 import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.ts";
+import { spawnScriptSync } from "../../bin/fm-script-launcher.mjs";
 
 type ArmResult = {
   ok: boolean;
@@ -556,9 +557,9 @@ export default function (pi: ExtensionAPI) {
     detail: string;
   } {
     try {
-      const result = spawnSync(
-        "bash",
-        [armScript, "--handling-delivered", recovery.generation, "--watcher-pid", recovery.watcherPid],
+      const result = spawnScriptSync(
+        armScript,
+        ["--handling-delivered", recovery.generation, "--watcher-pid", recovery.watcherPid],
         {
           cwd: fmRoot,
           encoding: "utf8",

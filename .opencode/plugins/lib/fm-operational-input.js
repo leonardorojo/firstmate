@@ -1,4 +1,4 @@
-import { spawnScript } from "../../../.pi/extensions/lib/fm-script-launcher.mjs";
+import { spawnScript } from "../../../bin/fm-script-launcher.mjs";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

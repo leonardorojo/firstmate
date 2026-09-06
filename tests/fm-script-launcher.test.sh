@@ -20,7 +20,7 @@ node_available() {
 
 test_platform_mapping() {
   node --input-type=module <<'JS'
-import { scriptInvocation } from "./.pi/extensions/lib/fm-script-launcher.mjs";
+import { scriptInvocation } from "./bin/fm-script-launcher.mjs";
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -55,7 +55,7 @@ done
 SH
   chmod +x "$script"
   output=$(node --input-type=module <<'JS'
-import { spawnScript, spawnScriptSync } from "./.pi/extensions/lib/fm-script-launcher.mjs";
+import { spawnScript, spawnScriptSync } from "./bin/fm-script-launcher.mjs";
 
 const script = process.env.FM_LAUNCHER_SCRIPT;
 const cwd = process.env.FM_LAUNCHER_CWD;

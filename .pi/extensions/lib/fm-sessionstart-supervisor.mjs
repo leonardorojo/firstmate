@@ -1,4 +1,4 @@
-import { spawnScript } from "./fm-script-launcher.mjs";
+import { spawnScript } from "../../../bin/fm-script-launcher.mjs";
 
 const [runner, ...args] = process.argv.slice(2);
 let runnerCode;

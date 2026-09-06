@@ -48,6 +48,7 @@ install_pi_branch_extension_fixture() {
   local repo=$1
   mkdir -p \
     "$repo/.pi/extensions/lib" \
+    "$repo/bin" \
     "$repo/node_modules/@earendil-works/pi-coding-agent" \
     "$repo/node_modules/@earendil-works/pi-ai" \
     "$repo/node_modules/@earendil-works/pi-tui" \
@@ -58,8 +59,7 @@ install_pi_branch_extension_fixture() {
   cp "$ROOT/.pi/extensions/lib/fm-branch-model-picker.ts" "$repo/.pi/extensions/lib/fm-branch-model-picker.ts"
   cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$repo/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
-  cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$repo/.pi/extensions/lib/fm-script-launcher.mjs"
-  mkdir -p "$repo/bin"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$repo/bin/fm-script-launcher.mjs"
   cp "$ROOT/bin/fm-operational-input.sh" "$repo/bin/fm-operational-input.sh"
   chmod +x "$repo/bin/fm-operational-input.sh"
   cat > "$repo/node_modules/@earendil-works/pi-coding-agent/package.json" <<'JSON'
@@ -4134,14 +4134,14 @@ test_outcomes_tool_uses_stock_execution_and_export_consumers() {
     return
   fi
   fixture="$TMP_ROOT/stock-render-consumers"
-  mkdir -p "$fixture/.pi/extensions/lib" "$fixture/node_modules/@earendil-works"
+  mkdir -p "$fixture/.pi/extensions/lib" "$fixture/bin" "$fixture/node_modules/@earendil-works"
   cp "$EXT" "$fixture/.pi/extensions/fm-branch-supervision.ts"
   cp "$ROOT/.pi/extensions/lib/fm-branch-dispatch.ts" "$fixture/.pi/extensions/lib/fm-branch-dispatch.ts"
   cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$fixture/.pi/extensions/lib/fm-async-exec.ts"
   cp "$ROOT/.pi/extensions/lib/fm-branch-model-picker.ts" "$fixture/.pi/extensions/lib/fm-branch-model-picker.ts"
   cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$fixture/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/.pi/extensions/lib/fm-operational-input.ts"
-  cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$fixture/.pi/extensions/lib/fm-script-launcher.mjs"
+  cp "$ROOT/bin/fm-script-launcher.mjs" "$fixture/bin/fm-script-launcher.mjs"
   ln -s "$package_dir" "$fixture/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$package_dir/node_modules/@earendil-works/pi-tui" "$fixture/node_modules/@earendil-works/pi-tui"
   ln -s "$package_dir/node_modules/@earendil-works/pi-ai" "$fixture/node_modules/@earendil-works/pi-ai"

@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
-import { spawnScript } from "../../.pi/extensions/lib/fm-script-launcher.mjs";
+import { spawnScript } from "../../bin/fm-script-launcher.mjs";
 
 // PreToolUse seatbelt for OpenCode: block a stray persistent top-level `cd` in
 // the primary firstmate checkout before the agent's bash tool relocates the

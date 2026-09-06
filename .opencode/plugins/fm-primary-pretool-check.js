@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
-import { spawnScript } from "../../.pi/extensions/lib/fm-script-launcher.mjs";
+import { spawnScript } from "../../bin/fm-script-launcher.mjs";
 
 // PreToolUse seatbelt for OpenCode: the arm mechanism itself lives entirely in
 // fm-primary-watch-arm.js (a plugin-owned child process, never a model tool

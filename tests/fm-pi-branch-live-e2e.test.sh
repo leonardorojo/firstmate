@@ -49,7 +49,7 @@ TMP_ROOT=$(fm_test_tmproot fm-pi-branch-live)
 repo="$TMP_ROOT/repo"
 home="$TMP_ROOT/home"
 agentdir="$TMP_ROOT/agent-dir"
-mkdir -p "$repo/.pi/extensions/lib" "$repo/node_modules/@earendil-works" \
+mkdir -p "$repo/.pi/extensions/lib" "$repo/bin" "$repo/node_modules/@earendil-works" \
   "$home/state" "$home/config" "$agentdir"
 cp "$ROOT/.pi/extensions/fm-branch-supervision.ts" "$repo/.pi/extensions/fm-branch-supervision.ts"
 cp "$ROOT/.pi/extensions/fm-primary-pi-watch.ts" "$repo/.pi/extensions/fm-primary-pi-watch.ts"
@@ -58,8 +58,7 @@ cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$repo/.pi/extensions/lib/fm-asyn
 cp "$ROOT/.pi/extensions/lib/fm-branch-model-picker.ts" "$repo/.pi/extensions/lib/fm-branch-model-picker.ts"
 cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$repo/.pi/extensions/lib/fm-calm-visibility.ts"
 cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
-cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$repo/.pi/extensions/lib/fm-script-launcher.mjs"
-mkdir -p "$repo/bin"
+cp "$ROOT/bin/fm-script-launcher.mjs" "$repo/bin/fm-script-launcher.mjs"
 cp "$ROOT/bin/fm-operational-input.sh" "$repo/bin/fm-operational-input.sh"
 cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash

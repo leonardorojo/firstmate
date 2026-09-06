@@ -1,5 +1,5 @@
 import { dirname, resolve } from "node:path";
-import { spawnScriptSync } from "./fm-script-launcher.mjs";
+import { spawnScriptSync } from "../../../bin/fm-script-launcher.mjs";
 import { fileURLToPath } from "node:url";
 
 const operationalInputScript =
