@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
+import { spawnScriptSync } from "./fm-script-launcher.mjs";
 import { fileURLToPath } from "node:url";
 
 const operationalInputScript =
@@ -45,7 +45,7 @@ function runOperationalInputCommand(
   content: string,
   kind?: FirstmateCurrentOperationalKind,
 ): string | undefined {
-  const result = spawnSync(operationalInputScript, operationalInputArgs(command, kind), {
+  const result = spawnScriptSync(operationalInputScript, operationalInputArgs(command, kind), {
     encoding: "utf8",
     input: content,
     maxBuffer: 1024 * 1024,

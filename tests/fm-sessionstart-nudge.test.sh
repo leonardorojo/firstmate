@@ -332,6 +332,7 @@ test_pi_startup_classifies_cli_continuations() {
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$fixture/.pi/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" \
     "$ROOT/.pi/extensions/lib/fm-sessionstart-supervisor.mjs" "$fixture/.pi/extensions/lib/"
+  cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$fixture/.pi/extensions/lib/fm-script-launcher.mjs"
   cat > "$fixture/bin/fm-sessionstart-run.sh" <<'SH'
 #!/usr/bin/env bash
 source_name=
@@ -430,6 +431,7 @@ test_pi_sessionstart_generation_prerequisite() {
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$fixture/.pi/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" \
     "$ROOT/.pi/extensions/lib/fm-sessionstart-supervisor.mjs" "$fixture/.pi/extensions/lib/"
+  cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$fixture/.pi/extensions/lib/fm-script-launcher.mjs"
   cp "$ROOT/bin/fm-operational-input.sh" "$fixture/bin/"
   cat > "$fixture/bin/fm-turnend-guard.sh" <<'SH'
 #!/usr/bin/env bash
@@ -756,6 +758,7 @@ test_pi_reload_releases_sessionstart_exit_listener() {
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$fixture/.pi/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" \
     "$ROOT/.pi/extensions/lib/fm-sessionstart-supervisor.mjs" "$fixture/.pi/extensions/lib/"
+  cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$fixture/.pi/extensions/lib/fm-script-launcher.mjs"
   cp "$ROOT/bin/fm-operational-input.sh" "$fixture/bin/"
   cat > "$fixture/bin/fm-turnend-guard.sh" <<'SH'
 #!/usr/bin/env bash
@@ -890,6 +893,7 @@ test_pi_large_sessionstart_digest_is_delivered_loudly() {
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$fixture/.pi/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" \
     "$ROOT/.pi/extensions/lib/fm-sessionstart-supervisor.mjs" "$fixture/.pi/extensions/lib/"
+  cp "$ROOT/.pi/extensions/lib/fm-script-launcher.mjs" "$fixture/.pi/extensions/lib/fm-script-launcher.mjs"
   cp "$ROOT/bin/fm-sessionstart-run.sh" "$ROOT/bin/fm-sessionstart-nudge.sh" \
     "$ROOT/bin/fm-primary-scope-lib.sh" "$ROOT/bin/fm-gate-refuse-lib.sh" \
     "$ROOT/bin/fm-hook-host-lib.sh" \

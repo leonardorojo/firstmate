@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { spawnScript } from "../../.pi/extensions/lib/fm-script-launcher.mjs";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.js";
@@ -34,6 +35,25 @@ async function resolveRoot(anchor) {
   return resolvePath(anchor);
 }
 
+function runScript(script, args, input = "") {
+  return new Promise((resolvePromise) => {
+    const child = spawnScript(script, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", () => resolvePromise({ code: 0, stdout: "", stderr: "" }));
+    child.on("close", (code) => resolvePromise({ code: code ?? 0, stdout, stderr }));
+    child.stdin.end(input);
+  });
+}
+
 function resolvePath(anchor) {
   try {
     return realpathSync(anchor);
@@ -44,7 +64,7 @@ function resolvePath(anchor) {
 
 function runGuard(root) {
   if (!root) return Promise.resolve({ code: 0, stderr: "" });
-  return runProcess(`${root}/bin/fm-turnend-guard.sh`, [], '{"stop_hook_active":false}');
+  return runScript(`${root}/bin/fm-turnend-guard.sh`, [], '{"stop_hook_active":false}');
 }
 
 async function letWatchArmRun(sessionID, client) {

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnScript } from "./fm-script-launcher.mjs";
 
 const [runner, ...args] = process.argv.slice(2);
 let runnerCode;
@@ -21,7 +21,7 @@ process.on("disconnect", () => {
   }
 });
 
-const child = spawn(runner, args, {
+const child = spawnScript(runner, args, {
   env: { ...process.env, FM_SESSIONSTART_SUPERVISOR_PID: String(process.pid) },
   stdio: ["ignore", "pipe", "ignore"],
 });

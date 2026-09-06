@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { spawnScript } from "../../.pi/extensions/lib/fm-script-launcher.mjs";
 
 // PreToolUse seatbelt for OpenCode: the arm mechanism itself lives entirely in
 // fm-primary-watch-arm.js (a plugin-owned child process, never a model tool
@@ -14,6 +15,22 @@ import { spawn } from "node:child_process";
 function runProcess(command, args) {
   return new Promise((resolvePromise) => {
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", () => resolvePromise({ code: 0, stdout: "", stderr: "" }));
+    child.on("close", (code) => resolvePromise({ code: code ?? 0, stdout, stderr }));
+  });
+}
+
+function runScript(script, args) {
+  return new Promise((resolvePromise) => {
+    const child = spawnScript(script, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => {
@@ -54,7 +71,7 @@ export const FmPrimaryPretoolCheck = async ({ directory, worktree }) => {
       const command = output?.args?.command;
       if (!command || typeof command !== "string") return;
 
-      const result = await runProcess(`${root}/bin/fm-arm-pretool-check.sh`, ["--command", command]);
+      const result = await runScript(`${root}/bin/fm-arm-pretool-check.sh`, ["--command", command]);
       if (result.code !== 2) return;
 
       const reason = result.stderr.trim() || "denied by the watcher-arm PreToolUse seatbelt";

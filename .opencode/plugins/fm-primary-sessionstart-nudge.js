@@ -1,12 +1,25 @@
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
+import { spawnScript } from "../../.pi/extensions/lib/fm-script-launcher.mjs";
 
 const handledSessions = new Set();
 
 function runProcess(command, args) {
   return new Promise((resolveResult) => {
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "ignore"] });
+    let stdout = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.on("error", () => resolveResult({ code: 0, stdout: "" }));
+    child.on("close", (code) => resolveResult({ code: code ?? 0, stdout }));
+  });
+}
+
+function runScript(script, args) {
+  return new Promise((resolveResult) => {
+    const child = spawnScript(script, args, { stdio: ["ignore", "pipe", "ignore"] });
     let stdout = "";
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
@@ -42,7 +55,7 @@ export const FmPrimarySessionstartNudge = async ({ client, directory, worktree }
       if (!sessionID || handledSessions.has(sessionID) || !root) return;
       handledSessions.add(sessionID);
 
-      const result = await runProcess(`${root}/bin/fm-sessionstart-nudge.sh`, []);
+      const result = await runScript(`${root}/bin/fm-sessionstart-nudge.sh`, []);
       const nudge = result.code === 0 ? result.stdout.trim() : "";
       if (!nudge) return;
 

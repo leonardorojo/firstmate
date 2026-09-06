@@ -8,6 +8,7 @@ import {
   classifyFirstmateCurrentOperationalText,
   encodeFirstmateOperationalInput,
 } from "./lib/fm-operational-input.ts";
+import { spawnScript } from "./lib/fm-script-launcher.mjs";
 
 let guardFollowupActive = false;
 
@@ -254,24 +255,24 @@ function runSessionstartHook(generation: SessionstartGeneration): Promise<Sessio
     const runner = `${root}/bin/fm-sessionstart-run.sh`;
     let child: ChildProcess;
     try {
-      child = spawn(
-        supervised ? "node" : runner,
-        supervised
-          ? [
-              `${extensionDir}/lib/fm-sessionstart-supervisor.mjs`,
-              runner,
-              "--source",
-              generation.source,
-              "--pi-prerequisite",
-            ]
-          : ["--source", generation.source, "--pi-prerequisite"],
-        {
-          detached: supervised,
-          stdio: supervised
-            ? ["ignore", "pipe", "ignore", "ipc"]
-            : ["ignore", "pipe", "ignore"],
-        },
-      );
+      const args = supervised
+        ? [
+            `${extensionDir}/lib/fm-sessionstart-supervisor.mjs`,
+            runner,
+            "--source",
+            generation.source,
+            "--pi-prerequisite",
+          ]
+        : ["--source", generation.source, "--pi-prerequisite"];
+      child = supervised
+        ? spawn("node", args, {
+            detached: true,
+            stdio: ["ignore", "pipe", "ignore", "ipc"],
+          })
+        : spawnScript(runner, args, {
+            detached: false,
+            stdio: ["ignore", "pipe", "ignore"],
+          });
     } catch {
       settle(generation.stopping ? { kind: "cancelled" } : { kind: "failed" });
       return;
@@ -440,7 +441,7 @@ async function claimSessionstartMessage(
 
 function runGuard(): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
-    const child = spawn(`${root}/bin/fm-turnend-guard.sh`, {
+    const child = spawnScript(`${root}/bin/fm-turnend-guard.sh`, [], {
       stdio: ["pipe", "ignore", "pipe"],
     });
     let stderr = "";
@@ -462,7 +463,7 @@ function runGuard(): Promise<{ code: number; stderr: string }> {
 // script owns its own decision and is inert outside the real primary checkout.
 function runChecker(script: string, command: string): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
-    const child = spawn(`${root}/bin/${script}`, ["--command", command], {
+    const child = spawnScript(`${root}/bin/${script}`, ["--command", command], {
       stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";

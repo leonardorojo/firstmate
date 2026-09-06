@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnScript } from "../../../.pi/extensions/lib/fm-script-launcher.mjs";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ export function encodeFirstmateOperationalInput(root, kind, content) {
     const script = existsSync(requested)
       ? requested
       : `${adapterRoot}/bin/fm-operational-input.sh`;
-    const child = spawn(script, ["encode", kind], {
+    const child = spawnScript(script, ["encode", kind], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
