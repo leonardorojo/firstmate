@@ -45,6 +45,73 @@ fm_harness_path_name() {  # <path>
   return 1
 }
 
+# Print one whitespace-delimited command-line token, preserving whitespace inside
+# matching quotes. This is intentionally only a small parser for the node
+# executable and its first script argument; it never evaluates command text.
+_fm_command_token_at() {  # <command-line> <one-based-index>
+  local input=$1 wanted=$2 i=0 len ch token='' quote='' started=0 count=0
+  case "$wanted" in
+    ''|*[!0-9]*|0) return 1 ;;
+  esac
+  len=${#input}
+  while [ "$i" -lt "$len" ]; do
+    ch=${input:i:1}
+    if [ -n "$quote" ]; then
+      if [ "$ch" = "$quote" ]; then
+        quote=''
+      else
+        token+=$ch
+      fi
+      started=1
+    else
+      case "$ch" in
+        ' '|$'\t'|$'\r'|$'\n')
+          if [ "$started" -eq 1 ]; then
+            count=$((count + 1))
+            if [ "$count" -eq "$wanted" ]; then
+              printf '%s' "$token"
+              return 0
+            fi
+            token=''
+            started=0
+          fi
+          ;;
+        \"|\') quote=$ch; started=1 ;;
+        *) token+=$ch; started=1 ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  [ -z "$quote" ] || return 1
+  if [ "$started" -eq 1 ]; then
+    count=$((count + 1))
+    if [ "$count" -eq "$wanted" ]; then
+      printf '%s' "$token"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# Pi's npm shim execs node directly with the package's dist/cli.js as argv[1].
+# Keep this identity separate from FM_HARNESS_RE: later user arguments are not
+# evidence, and package-looking filename fragments are not official components.
+_fm_node_pi_process_matches() {  # <comm> <args>
+  local comm=$1 args=$2 normalized_comm script_arg
+  normalized_comm=${comm//\\//}
+  case "$(basename -- "$normalized_comm")" in
+    node|node.exe) ;;
+    *) return 1 ;;
+  esac
+  script_arg=$(_fm_command_token_at "$args" 2) || return 1
+  script_arg=${script_arg//\\//}
+  script_arg=${script_arg,,}
+  case "/$script_arg/" in
+    */@earendil-works/pi-coding-agent/*) return 0 ;;
+  esac
+  return 1
+}
+
 # True when the process described by command name $1 and full argument string $2
 # is a verified harness. Sets FM_HARNESS_IS_CLAUDE for the ancestry walk.
 #
@@ -55,8 +122,9 @@ fm_harness_path_name() {  # <path>
 #      argv[0] in `ps -o comm=`, while procps on Linux reports the kernel exec
 #      name and ignores argv[0] entirely, so a version-named Claude Code binary
 #      is identified by its install path on macOS and by argv[0] on Linux.
-#   3. a bare interpreter (node, python) running a harness script path.
-#   4. Cursor's own structural identity, owned by bin/fm-cursor-lib.sh.
+#   3. node/node.exe with the official Pi package as its first script argument.
+#   4. a bare interpreter (node, python) running a harness script path.
+#   5. Cursor's own structural identity, owned by bin/fm-cursor-lib.sh.
 FM_HARNESS_IS_CLAUDE=0
 fm_harness_process_matches() {  # <comm> <args>
   local comm=$1 args=$2 base argv0 name
@@ -69,6 +137,9 @@ fm_harness_process_matches() {  # <comm> <args>
   argv0=${args%% *}
   if name=$(fm_harness_path_name "$comm") || name=$(fm_harness_path_name "$argv0"); then
     case "$name" in claude) FM_HARNESS_IS_CLAUDE=1 ;; esac
+    return 0
+  fi
+  if _fm_node_pi_process_matches "$comm" "$args"; then
     return 0
   fi
   # Bare interpreter (e.g. node): match the harness name in its script path.

@@ -48,6 +48,19 @@ lib_eval() {  # <fakebin> <expression>
   " "$LIB"
 }
 
+matcher_eval() {  # <fakebin> <comm> <args>
+  local fakebin=$1 comm=$2 args=$3
+  FM_LOCK_PLATFORM=unix FM_TEST_COMM="$comm" FM_TEST_ARGS="$args" \
+    PATH="$fakebin:$PATH" bash -c '
+      . "$0"
+      if fm_harness_process_matches "$FM_TEST_COMM" "$FM_TEST_ARGS"; then
+        printf yes
+      else
+        printf no
+      fi
+    ' "$LIB"
+}
+
 # Run one library expression on the Windows inspection path. The native data
 # seams are shadowed from fixtures (as lib_eval shadows kill): this shell's MSYS
 # pid, the MSYS logical process table, the Win32_Process ancestry walk, the
@@ -199,6 +212,55 @@ SH
     fi
   done
   pass "session-lock: ordinary script paths under a harness directory are not harness processes"
+}
+
+test_node_pi_identity_is_structural() {
+  local dir fakebin got
+  dir="$TMP_ROOT/node-pi-identity"
+  fakebin=$(fm_fakebin "$dir")
+
+  got=$(matcher_eval "$fakebin" \
+    'C:\Program Files\nodejs\node.exe' \
+    '"C:\Program Files\nodejs\node.exe" "C:\Users\lgroj\AppData\Roaming\npm\node_modules\@earendil-works\pi-coding-agent\dist\cli.js" --model test')
+  [ "$got" = yes ] || fail "Windows node.exe plus the global Pi script was not recognized"
+
+  got=$(matcher_eval "$fakebin" \
+    '/usr/local/bin/node' \
+    '/usr/local/bin/node /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js --model test')
+  [ "$got" = yes ] || fail "POSIX node plus the global Pi script was not recognized"
+
+  got=$(matcher_eval "$fakebin" \
+    'C:\Program Files\nodejs\node.exe' \
+    '"C:\Program Files\nodejs\node.exe" "C:\tools\other.js" --note @earendil-works/pi-coding-agent')
+  [ "$got" = no ] || fail "a later user argument mentioning the Pi package was accepted"
+
+  got=$(matcher_eval "$fakebin" \
+    'C:\Program Files\nodejs\node.exe' \
+    '"C:\Program Files\nodejs\node.exe" "C:\tools\@earendil-works\pi-coding-agent-wrapper\dist\cli.js"')
+  [ "$got" = no ] || fail "a pi-coding-agent filename fragment was accepted"
+
+  got=$(matcher_eval "$fakebin" \
+    'node.exe' \
+    'node.exe C:\tools\ordinary.js')
+  [ "$got" = no ] || fail "an ordinary node process was accepted as Pi"
+
+  got=$(matcher_eval "$fakebin" \
+    'python.exe' \
+    'python.exe C:\Users\u\node_modules\@earendil-works\pi-coding-agent\dist\cli.js')
+  [ "$got" = no ] || fail "a non-node executable with the Pi script path was accepted"
+
+  pass "session-lock: Pi identity requires node/node.exe and exact package path components in argv[1]"
+}
+
+test_existing_harness_names_remain_recognized() {
+  local dir fakebin harness got
+  dir="$TMP_ROOT/existing-harness-identities"
+  fakebin=$(fm_fakebin "$dir")
+  for harness in claude codex opencode grok kimi pi pi-signed; do
+    got=$(matcher_eval "$fakebin" "$harness" "$harness --resume")
+    [ "$got" = yes ] || fail "existing $harness identity no longer matched"
+  done
+  pass "session-lock: existing Claude/Codex/OpenCode/Grok/Kimi/Pi/pi-signed identities remain recognized"
 }
 
 test_harness_beyond_a_gap_never_owns_the_lock() {
@@ -605,6 +667,8 @@ test_e2e_daemon_parented_version_named_session_keeps_its_lock() {
 test_platform_selection_uses_cached_ps_capability_and_override
 test_version_named_session_is_identified_on_both_platforms
 test_ordinary_paths_are_never_harness_processes
+test_node_pi_identity_is_structural
+test_existing_harness_names_remain_recognized
 test_harness_beyond_a_gap_never_owns_the_lock
 test_competing_version_named_session_is_seen_as_live
 test_windows_harness_is_found_beyond_the_bash_hops
