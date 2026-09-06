@@ -2132,6 +2132,25 @@ real_path_or_raw() {  # <path>
   fi
 }
 
+spawn_windows_herdr_git_root_fallback_enabled() {
+  [ "$BACKEND" = herdr ] || return 1
+  case "${OSTYPE:-}" in
+    msys*|mingw*|cygwin*) command -v cygpath >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+
+normalize_spawn_windows_herdr_git_root() {  # <native-or-msys-path>
+  local path=$1 converted
+  [ -n "$path" ] || return 1
+  converted=$(cygpath -u -- "$path" 2>/dev/null) || return 1
+  [ -n "$converted" ] || return 1
+  case "$converted" in
+    /*) real_path_or_raw "$converted" ;;
+    *) return 1 ;;
+  esac
+}
+
 # Session-provider container-ensure + task creation. tmux stays exactly as P1
 # left it (same session-name / new-window sequence, see bin/backends/tmux.sh);
 # a herdr spawn goes through the version-gated, workspace-per-HOME,
@@ -2843,8 +2862,11 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # pane that is already settled by the first real read only costs the one existing
   # inter-poll sleep as confirmation, not a whole extra cycle on top.
   candidate=""
+  windows_herdr_query_attempted=0
+  windows_herdr_query_marker="FM_GIT_TOPLEVEL_${ID//[^A-Za-z0-9]/_}_$$"
   for _ in $(seq 1 60); do
     p=$(spawn_current_path "$WT_TARGET" || true)
+    p_real=""
     if [ -n "$p" ]; then
       p_real=$(real_path_or_raw "$p")
       if [ "$p_real" != "$PROJ_ABS_REAL" ]; then
@@ -2858,6 +2880,24 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
       fi
     else
       candidate=""
+    fi
+    # Herdr on native Windows can leave structured foreground_cwd empty (or
+    # frozen at the pane's project cwd) after treehouse has entered its nested
+    # shell. Query that shell directly, but only in this narrow platform case.
+    # The backend returns a path only for an exact sentinel-delimited Git-root
+    # response, and the normal isolation validation below remains authoritative.
+    if [ "$windows_herdr_query_attempted" -eq 0 ] \
+       && spawn_windows_herdr_git_root_fallback_enabled \
+       && { [ -z "$p" ] || [ "$p_real" = "$PROJ_ABS_REAL" ]; }; then
+      windows_herdr_query_attempted=1
+      queried_root=$(fm_backend_herdr_git_top_level \
+        "$WT_TARGET" "$windows_herdr_query_marker" 2>/dev/null || true)
+      if normalized_root=$(normalize_spawn_windows_herdr_git_root "$queried_root"); then
+        if [ "$normalized_root" != "$PROJ_ABS_REAL" ]; then
+          WT="$normalized_root"
+          break
+        fi
+      fi
     fi
     sleep 1
   done

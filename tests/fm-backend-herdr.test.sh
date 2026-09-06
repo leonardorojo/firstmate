@@ -3000,6 +3000,50 @@ test_current_path_reads_cwd() {
   pass "fm_backend_herdr_current_path: reads pane foreground_cwd (the live running process), not the frozen creation-time cwd"
 }
 
+test_git_top_level_uses_bounded_sentinel_protocol() {
+  local dir query_log output out
+  dir="$TMP_ROOT/git-top-level-query"; mkdir -p "$dir"
+  query_log="$dir/query.log"; output="$dir/output"
+  printf '%s\n' \
+    'prompt text' \
+    'FM_QUERY_BEGIN' \
+    '/tmp/worktree with spaces' \
+    'FM_QUERY_END' \
+    'prompt text' > "$output"
+  out=$(FM_HERDR_QUERY_LOG="$query_log" FM_HERDR_QUERY_OUTPUT="$output" \
+    bash -c '
+      . "$0/bin/backends/herdr.sh"
+      fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+      fm_backend_herdr_send_text_line() { printf "%s\n" "$2" > "$FM_HERDR_QUERY_LOG"; }
+      fm_backend_herdr_capture() { cat "$FM_HERDR_QUERY_OUTPUT"; }
+      FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
+    ' "$ROOT")
+  [ "$out" = "/tmp/worktree with spaces" ] || fail "sentinel query did not return the Git root with spaces, got '$out'"
+  assert_contains "$(cat "$query_log")" 'git rev-parse --show-toplevel' \
+    "sentinel query did not ask the pane shell for the authoritative Git root"
+  printf '%s\n' 'FM_QUERY_BEGIN' 'too many' 'lines' 'FM_QUERY_END' > "$output"
+  if FM_HERDR_QUERY_OUTPUT="$output" bash -c '
+    . "$0/bin/backends/herdr.sh"
+    fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+    fm_backend_herdr_send_text_line() { :; }
+    fm_backend_herdr_capture() { cat "$FM_HERDR_QUERY_OUTPUT"; }
+    FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
+  ' "$ROOT" >/dev/null 2>&1; then
+    fail "sentinel query accepted multiple lines between its markers"
+  fi
+  printf '%s\n' 'prompt text only' > "$output"
+  if FM_HERDR_QUERY_OUTPUT="$output" bash -c '
+    . "$0/bin/backends/herdr.sh"
+    fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+    fm_backend_herdr_send_text_line() { :; }
+    fm_backend_herdr_capture() { cat "$FM_HERDR_QUERY_OUTPUT"; }
+    FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
+  ' "$ROOT" >/dev/null 2>&1; then
+    fail "sentinel query accepted output without its markers"
+  fi
+  pass "fm_backend_herdr_git_top_level: accepts only one sentinel-delimited Git-root line and bounds polling"
+}
+
 # --- busy_state (semantic agent state) ---------------------------------------
 
 test_busy_state_working_maps_to_busy() {
@@ -4595,6 +4639,7 @@ test_capture_preserves_pane_read_failure
 test_send_key_normalizes_and_targets_pane
 test_kill_is_best_effort
 test_current_path_reads_cwd
+test_git_top_level_uses_bounded_sentinel_protocol
 test_busy_state_working_maps_to_busy
 test_busy_state_done_and_blocked_map_to_idle
 test_busy_state_unknown_on_no_agent
