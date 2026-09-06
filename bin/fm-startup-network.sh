@@ -420,7 +420,7 @@ EOF
 }
 
 cmd_run() {  # <locked> <lock-pid> <generation>
-  local locked=$1 lock_pid=$2 generation=$3 phases started budget out rc sweep_locked=0 downgraded=0 internal=0 lease_held=0 timings stage_started
+  local locked=$1 lock_pid=$2 generation=$3 phases started budget out rc sweep_locked=0 downgraded=0 internal=0 lease_held=0 timings stage_started session_claim_timeout claim_rc=0 claim_error=
   mkdir -p "$STATE" 2>/dev/null || return 1
   started=$(now)
   budget=$(stage_budget)
@@ -477,12 +477,24 @@ EOF
   stage_started=$(fm_timing_now_ms)
   rc=0
   if [ "$sweep_locked" -eq 1 ]; then
-    fm_lock_acquire_wait "$STATE/.lock.acquire"
-    lease_held=1
-    if ! lock_unchanged "$lock_pid"; then
+    session_claim_timeout=$(fm_session_lock_acquire_timeout)
+    fm_lock_acquire_wait_bounded "$STATE/.lock.acquire" "$session_claim_timeout" || claim_rc=$?
+    if [ "$claim_rc" -eq 0 ]; then
+      lease_held=1
+      if ! lock_unchanged "$lock_pid"; then
+        sweep_locked=0
+        phases=probe
+        downgraded=1
+      fi
+    else
       sweep_locked=0
       phases=probe
       downgraded=1
+      if [ "$claim_rc" -eq 124 ]; then
+        claim_error="NETWORK_CHECKS: could not acquire the session claim within ${session_claim_timeout}s; the mutating startup sweeps were skipped and belong to whichever session holds the lock now"
+      else
+        claim_error="NETWORK_CHECKS: could not acquire the session claim; the mutating startup sweeps were skipped and belong to whichever session holds the lock now"
+      fi
     fi
   fi
   # One aggregate deadline covers both deferred operations. The inactive scan
@@ -508,6 +520,10 @@ EOF
   # total even when the bound cut some of them off.
   fm_timing_record stage network-checks "$stage_started" "$phases"
 
+  if [ -n "$claim_error" ]; then
+    printf '%s\n' "$claim_error" >> "$out"
+    rc=1
+  fi
   if [ "$downgraded" -eq 1 ]; then
     printf 'NETWORK_CHECKS: the fleet lock was no longer held by the session that requested these, so dead-secondmate relaunch, secondmate convergence, pending handoff delivery, and project clone refresh were skipped; they belong to whichever session holds the lock now\n' >> "$out"
   fi

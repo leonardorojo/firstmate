@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tests/fm-watcher-lock.test.sh - watcher singleton + lock-primitive races +
-# PID identity stability + watch-arm liveness + guard warnings. These are
+# generic PID-namespace liveness + PID identity stability + watch-arm liveness +
+# guard warnings. These are
 # safety-critical process invariants (a race bug may not reproduce through an
 # e2e), so they stay as focused real-process units.
 set -u
@@ -1081,6 +1082,119 @@ test_stale_watch_reclaim_publishes_before_clear() {
   pass "stale watcher reclaim publishes durable recovery evidence before clear"
 }
 
+test_generic_pid_liveness_respects_msys_namespace() {
+  local dir state fakebin proc_root stale_pid live_pid lockdir out
+  dir=$(make_case generic-pid-msys)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  proc_root="$dir/proc"
+  stale_pid=4242
+  live_pid=4243
+  mkdir -p "$proc_root/$live_pid"
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+set -u
+pid=
+previous=
+for argument in "$@"; do
+  [ "$previous" = -p ] && pid=$argument
+  previous=$argument
+done
+printf '      PID    PPID COMMAND\n'
+if [ "$pid" = 4243 ]; then
+  printf '     4243       1 live-msys-holder\n'
+  exit 0
+fi
+exit 1
+SH
+  chmod +x "$fakebin/ps"
+
+  out=$(PATH="$fakebin:$PATH" FM_PROC_ROOT_OVERRIDE="$proc_root" FM_STATE_OVERRIDE="$state" bash -c '
+    kill() { return 0; }
+    . "$1"
+    _FM_UNAME=MINGW64_NT-10.0
+    stale=$(fm_pid_alive 4242; printf "%s" "$?")
+    live=$(fm_pid_alive 4243; printf "%s" "$?")
+    printf "stale=%s live=%s\n" "$stale" "$live"
+  ' _ "$LIB")
+  [ "$out" = 'stale=1 live=0' ] \
+    || fail "MSYS liveness trusted kill -0 or missed /proc positive evidence: $out"
+
+  lockdir="$state/.generic-stale.lock"
+  mkdir "$lockdir"
+  printf '%s\n' "$stale_pid" > "$lockdir/pid"
+  out=$(PATH="$fakebin:$PATH" FM_PROC_ROOT_OVERRIDE="$proc_root" FM_STATE_OVERRIDE="$state" bash -c '
+    kill() { return 0; }
+    . "$1"
+    _FM_UNAME=MINGW64_NT-10.0
+    if fm_lock_recheck_stale_owner "$2" "" 4242; then verdict=reclaimable; else verdict=held; fi
+    printf "%s\n" "$verdict"
+  ' _ "$LIB" "$lockdir")
+  [ "$out" = reclaimable ] \
+    || fail "stale MSYS claim was not reclaimable from the MSYS pid namespace: $out"
+
+  lockdir="$state/.generic-live.lock"
+  mkdir "$lockdir"
+  printf '%s\n' "$live_pid" > "$lockdir/pid"
+  out=$(PATH="$fakebin:$PATH" FM_PROC_ROOT_OVERRIDE="$proc_root" FM_STATE_OVERRIDE="$state" bash -c '
+    kill() { return 0; }
+    . "$1"
+    _FM_UNAME=MINGW64_NT-10.0
+    if fm_lock_recheck_stale_owner "$2" "" 4243; then verdict=reclaimable; else verdict=held; fi
+    printf "%s\n" "$verdict"
+  ' _ "$LIB" "$lockdir")
+  [ "$out" = held ] || fail "genuinely live MSYS claim was reclaimable: $out"
+  pass "generic lock liveness uses MSYS /proc and ps, not native kill -0"
+}
+
+test_generic_pid_liveness_is_conservative_when_msys_observation_is_unavailable() {
+  local dir state fakebin proc_root lockdir out
+  dir=$(make_case generic-pid-unresolved)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  proc_root="$dir/no-proc"
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+exit 127
+SH
+  chmod +x "$fakebin/ps"
+  lockdir="$state/.generic-unresolved.lock"
+  mkdir "$lockdir"
+  printf '4244\n' > "$lockdir/pid"
+  out=$(PATH="$fakebin:$PATH" FM_PROC_ROOT_OVERRIDE="$proc_root" FM_STATE_OVERRIDE="$state" bash -c '
+    kill() { return 0; }
+    . "$1"
+    _FM_UNAME=MINGW64_NT-10.0
+    if fm_pid_alive 4244; then alive=yes; else alive=no; fi
+    if fm_lock_try_acquire "$2"; then rc=0; else rc=$?; fi
+    printf "alive=%s rc=%s pid=%s\n" "$alive" "$rc" "$(cat "$2/pid")"
+  ' _ "$LIB" "$lockdir")
+  [ "$out" = 'alive=yes rc=1 pid=4244' ] \
+    || fail "unresolved MSYS observation was treated as a dead claim: $out"
+  pass "unavailable MSYS process observation preserves conservative live contention"
+}
+
+test_unix_pid_liveness_still_uses_kill_zero() {
+  local out
+  out=$(bash -c '
+    kill() { [ "$1" = -0 ] && return "${FAKE_KILL_RC:-0}"; return 1; }
+    . "$1"
+    _FM_UNAME=Linux
+    if fm_pid_alive 4245; then alive=yes; else alive=no; fi
+    printf "%s\n" "$alive"
+  ' _ "$LIB")
+  [ "$out" = yes ] || fail "Linux generic liveness no longer followed kill -0: $out"
+  out=$(FAKE_KILL_RC=1 bash -c '
+    kill() { [ "$1" = -0 ] && return "${FAKE_KILL_RC:-0}"; return 1; }
+    . "$1"
+    _FM_UNAME=Darwin
+    if fm_pid_alive 4245; then alive=yes; else alive=no; fi
+    printf "%s\n" "$alive"
+  ' _ "$LIB")
+  [ "$out" = no ] || fail "macOS generic liveness no longer followed kill -0: $out"
+  pass "Linux and macOS generic liveness retain kill -0 semantics"
+}
+
 test_msys_pid_identity_uses_proc() {
   local live identity
   case "$(uname)" in
@@ -1105,6 +1219,9 @@ test_msys_pid_identity_uses_proc() {
 test_singleton_start
 test_pid_identity_is_locale_invariant
 test_proc_pid_identity_ignores_wall_clock_and_detects_pid_reuse
+test_generic_pid_liveness_respects_msys_namespace
+test_generic_pid_liveness_is_conservative_when_msys_observation_is_unavailable
+test_unix_pid_liveness_still_uses_kill_zero
 test_msys_pid_identity_uses_proc
 test_stale_watch_lock_reclaimed
 test_stale_watch_reclaim_publishes_before_clear

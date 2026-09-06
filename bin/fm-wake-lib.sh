@@ -9,6 +9,7 @@ STATE="${FM_STATE_OVERRIDE:-${STATE:-$FM_HOME/state}}"
 FM_WAKE_QUEUE="${FM_WAKE_QUEUE:-$STATE/.wake-queue}"
 FM_WAKE_QUEUE_LOCK="${FM_WAKE_QUEUE_LOCK:-$STATE/.wake-queue.lock}"
 FM_LOCK_STALE_AFTER="${FM_LOCK_STALE_AFTER:-2}"
+FM_SESSION_LOCK_ACQUIRE_TIMEOUT_DEFAULT=30
 # Resolved once at source time: fm_pid_identity and fm_path_mtime run inside 0.2s
 # confirm and 0.5s attach polls, and forking uname per call is a measurable cost on
 # the platform (Git Bash/MSYS) that already pays the highest fork price.
@@ -45,12 +46,58 @@ fm_current_pid() {  # [output-variable]
   fi
 }
 
+# Git Bash/MSYS/Cygwin generic lock owners live in the MSYS pid namespace.
+# Native Win32 harness liveness remains exclusively owned by fm-session-lock-lib.sh.
+_fm_msys_pid_alive() {
+  local pid=$1 proc_root=${FM_PROC_ROOT_OVERRIDE:-/proc} output rc
+  if [ -r "$proc_root/$pid/stat" ] || [ -r "$proc_root/$pid/cmdline" ] || [ -d "$proc_root/$pid" ]; then
+    # A real MSYS /proc entry is positive evidence even when one metadata file
+    # is unavailable during process exit.
+    return 0
+  fi
+  output=$(LC_ALL=C ps -p "$pid" 2>/dev/null)
+  rc=$?
+  case "$rc" in
+    0)
+      # A successful query whose row cannot be parsed is unresolved, not dead.
+      if printf '%s\n' "$output" | awk -v pid="$pid" 'NR > 1 && $1 == pid { found=1 } END { exit found ? 0 : 1 }'; then
+        return 0
+      fi
+      return 0
+      ;;
+    1)
+      # Cygwin/MSYS ps prints its header even for a missing pid. Without that
+      # header the process table was unavailable or unreadable, so retain the
+      # conservative live-contention answer.
+      if printf '%s\n' "$output" | awk 'NR == 1 && $1 == "PID" { found=1 } END { exit found ? 0 : 1 }'; then
+        return 1
+      fi
+      return 0
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 fm_pid_alive() {
   local pid=$1
   case "$pid" in
     ''|*[!0-9]*) return 1 ;;
   esac
-  kill -0 "$pid" 2>/dev/null
+  case "$_FM_UNAME" in
+    MSYS*|MINGW*|CYGWIN*) _fm_msys_pid_alive "$pid" ;;
+    *) kill -0 "$pid" 2>/dev/null ;;
+  esac
+}
+
+# The one bounded wait contract for replacing a session's .lock.acquire claim.
+fm_session_lock_acquire_timeout() {
+  local timeout=${FM_SESSION_LOCK_ACQUIRE_TIMEOUT:-$FM_SESSION_LOCK_ACQUIRE_TIMEOUT_DEFAULT}
+  case "$timeout" in
+    ''|*[!0-9]*|0) timeout=$FM_SESSION_LOCK_ACQUIRE_TIMEOUT_DEFAULT ;;
+  esac
+  printf '%s\n' "$timeout"
 }
 
 fm_pid_identity() {

@@ -73,7 +73,17 @@ if ! fm_lock_try_acquire "$CLAIM_LOCK"; then
     echo "error: the prior session's bounded startup sweep is finishing; operate read-only until it releases the fleet lock" >&2
     exit 1
   fi
-  fm_lock_acquire_wait "$CLAIM_LOCK"
+  session_claim_timeout=$(fm_session_lock_acquire_timeout)
+  claim_rc=0
+  fm_lock_acquire_wait_bounded "$CLAIM_LOCK" "$session_claim_timeout" || claim_rc=$?
+  if [ "$claim_rc" -ne 0 ]; then
+    if [ "$claim_rc" -eq 124 ]; then
+      echo "error: session lock acquisition timed out after ${session_claim_timeout}s; operate read-only until the claim is released" >&2
+    else
+      echo "error: could not acquire the session lock claim within ${session_claim_timeout}s; operate read-only until resolved" >&2
+    fi
+    exit 1
+  fi
 fi
 CLAIM_LOCK_HELD=1
 

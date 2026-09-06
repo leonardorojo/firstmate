@@ -576,6 +576,51 @@ EOF
   pass "fm-startup-network: a new lock owner gets a distinct worker generation"
 }
 
+test_session_claim_contention_is_bounded_and_preserves_live_owner() {
+  local rec home root log holder claim report started elapsed
+  rec=$(new_world session-claim-timeout)
+  IFS='|' read -r home root log <<EOF
+$rec
+EOF
+  printf '%s\n' $$ > "$home/state/.lock"
+  sleep 30 &
+  holder=$!
+  claim="$home/state/.lock.acquire"
+  mkdir "$claim"
+  printf '%s\n' "$holder" > "$claim/pid"
+
+  started=$(date +%s)
+  FM_SESSION_LOCK_ACQUIRE_TIMEOUT=1 FM_FAKE_BOOTSTRAP_LOG="$log" \
+    run_stage "$home" "$root" run --locked 1
+  elapsed=$(( $(date +%s) - started ))
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+
+  [ "$elapsed" -lt 5 ] || fail "session-claim contention waited ${elapsed}s instead of the configured bound"
+  [ "$(cat "$claim/pid")" = "$holder" ] \
+    || fail "bounded session-claim contention deleted or replaced a live holder"
+  assert_grep 'network=only detect_only=1' "$log" \
+    "session-claim timeout ran mutating startup sweeps"
+  report=$(run_stage "$home" "$root" report)
+  assert_contains "$report" "could not acquire the session claim within 1s" \
+    "session-claim timeout was not reported clearly"
+  pass "session-claim contention is bounded, read-only, and preserves its live owner"
+}
+
+test_session_claim_timeout_contract_falls_back_for_invalid_values() {
+  local value observed
+  for value in '' 0 -1 invalid; do
+    observed=$(FM_SESSION_LOCK_ACQUIRE_TIMEOUT="$value" bash -c \
+      '. "$1"; fm_session_lock_acquire_timeout' _ "$ROOT/bin/fm-wake-lib.sh")
+    [ "$observed" = 30 ] \
+      || fail "invalid session-claim timeout '$value' resolved to '$observed' instead of 30s"
+  done
+  observed=$(FM_SESSION_LOCK_ACQUIRE_TIMEOUT=7 bash -c \
+    '. "$1"; fm_session_lock_acquire_timeout' _ "$ROOT/bin/fm-wake-lib.sh")
+  [ "$observed" = 7 ] || fail "positive session-claim timeout did not remain 7s: $observed"
+  pass "session-claim timeout uses one 30s default for invalid values"
+}
+
 test_lock_takeover_stays_read_only_while_a_sweep_holds_the_lease() {
   local rec home root log next_owner new_owner out rc started elapsed waited=0
   rec=$(new_world sweep-lease)
@@ -774,6 +819,8 @@ test_locked_start_is_not_satisfied_by_an_inflight_probe
 test_start_is_single_flight
 test_start_reserves_its_generation_before_returning
 test_new_lock_owner_does_not_reuse_the_previous_owners_worker
+test_session_claim_contention_is_bounded_and_preserves_live_owner
+test_session_claim_timeout_contract_falls_back_for_invalid_values
 test_lock_takeover_stays_read_only_while_a_sweep_holds_the_lease
 test_records_share_one_origin_so_offsets_form_a_timeline
 test_timings_are_published_and_only_the_on_demand_report_prints_them
