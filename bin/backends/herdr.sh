@@ -2548,10 +2548,34 @@ fm_backend_herdr_current_path() {  # <target>
 # separate, bounded fallback for the native Windows/MSYS Herdr path where that
 # field can stay at the pane's creation cwd while the visible shell has moved.
 # The begin/end lines are the only authority - prompt rendering is ignored.
+# fm_backend_herdr_git_top_level_capture: inspect one capture for the exact
+# sentinel-delimited Git-root response submitted by
+# fm_backend_herdr_git_top_level. This deliberately does not submit anything;
+# fm-spawn.sh uses it to keep observing the same marker after the helper's
+# initial bounded probes have elapsed.
+fm_backend_herdr_git_top_level_capture() {  # <target> <marker>
+  local target=$1 marker=$2
+  local begin="${marker}_BEGIN" end="${marker}_END"
+  local out root
+  out=$(FM_BACKEND_HERDR_RPC_TIMEOUT=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_RPC_TIMEOUT:-2} \
+    fm_backend_herdr_capture "$target" 200 2>/dev/null | tr -d '\r' || true)
+  root=$(printf '%s\n' "$out" | awk -v begin="$begin" -v end="$end" '
+    $0 == begin { inside=1; count=0; value=""; next }
+    $0 == end { if (inside && count == 1) { print value; found=1 }; inside=0; next }
+    inside { count++; value=$0 }
+    END { exit(found ? 0 : 1) }
+  ' || true)
+  if [ -n "$root" ] && [ "$(printf '%s\n' "$root" | wc -l | tr -d ' ')" = 1 ]; then
+    printf '%s\n' "$root"
+    return 0
+  fi
+  return 1
+}
+
 fm_backend_herdr_git_top_level() {  # <target> <marker>
   local target=$1 marker=$2
   local begin="${marker}_BEGIN" end="${marker}_END"
-  local command_text out root i=0 max=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS:-3}
+  local command_text i=0 max=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS:-3}
   local interval=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_INTERVAL:-0.1}
   case "$max" in ''|*[!0-9]*|0) max=3 ;; esac
   case "$interval" in ''|*[!0-9.]*|0) interval=0.1 ;; esac
@@ -2564,15 +2588,7 @@ fm_backend_herdr_git_top_level() {  # <target> <marker>
   FM_BACKEND_HERDR_RPC_TIMEOUT=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_RPC_TIMEOUT:-2} \
     fm_backend_herdr_send_text_line "$target" "$command_text" || return 1
   while [ "$i" -lt "$max" ]; do
-    out=$(FM_BACKEND_HERDR_RPC_TIMEOUT=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_RPC_TIMEOUT:-2} \
-      fm_backend_herdr_capture "$target" 200 2>/dev/null | tr -d '\r' || true)
-    root=$(printf '%s\n' "$out" | awk -v begin="$begin" -v end="$end" '
-      $0 == begin { inside=1; count=0; value=""; next }
-      $0 == end { if (inside && count == 1) { print value; found=1 }; inside=0; next }
-      inside { count++; value=$0 }
-      END { exit(found ? 0 : 1) }
-    ' || true)
-    if [ -n "$root" ] && [ "$(printf '%s\n' "$root" | wc -l | tr -d ' ')" = 1 ]; then
+    if root=$(fm_backend_herdr_git_top_level_capture "$target" "$marker"); then
       printf '%s\n' "$root"
       return 0
     fi

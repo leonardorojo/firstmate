@@ -2898,6 +2898,21 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
           break
         fi
       fi
+    elif [ "$windows_herdr_query_attempted" -eq 1 ] \
+      && spawn_windows_herdr_git_root_fallback_enabled \
+      && { [ -z "$p" ] || [ "$p_real" = "$PROJ_ABS_REAL" ]; }; then
+      # The query above is intentionally submitted only once. Its shell response
+      # can arrive after the backend helper's initial bounded captures, so keep
+      # parsing that same marker during this existing settle loop without
+      # changing its cadence or sending another command.
+      queried_root=$(fm_backend_herdr_git_top_level_capture \
+        "$WT_TARGET" "$windows_herdr_query_marker" 2>/dev/null || true)
+      if normalized_root=$(normalize_spawn_windows_herdr_git_root "$queried_root"); then
+        if [ "$normalized_root" != "$PROJ_ABS_REAL" ]; then
+          WT="$normalized_root"
+          break
+        fi
+      fi
     fi
     sleep 1
   done

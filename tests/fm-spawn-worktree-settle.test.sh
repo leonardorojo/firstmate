@@ -71,6 +71,8 @@ make_windows_herdr_fakebin() {
 set -u
 capture=${FM_FAKE_HERDR_CAPTURE:?}
 root=${FM_FAKE_HERDR_QUERY_ROOT:?}
+capture_count=${FM_FAKE_HERDR_CAPTURE_COUNT:?}
+query_submissions=${FM_FAKE_HERDR_QUERY_SUBMISSIONS:?}
 printf '%s\n' "$*" >> "${FM_FAKE_HERDR_LOG:?}"
 case "${1:-} ${2:-}" in
   "status --json")
@@ -95,15 +97,21 @@ case "${1:-} ${2:-}" in
     printf '%s\n' '{"error":{"code":"agent_not_found"}}'
     ;;
   "pane get")
-    printf '%s\n' '{"result":{"pane":{"cwd":"C:\\primary","foreground_cwd":""}}}'
+    printf '{"result":{"pane":{"cwd":"C:\\primary","foreground_cwd":"%s"}}}\n' \
+      "${FM_FAKE_HERDR_STRUCTURED_CWD:-}"
     ;;
   "pane run")
     command_text=${*:3}
     if [[ "$command_text" == *'cmd.exe /d /s /c'* ]] \
        && [[ "$command_text" == *'git rev-parse --show-toplevel'* ]]; then
       marker=$(printf '%s' "$command_text" | grep -oE 'FM_GIT_TOPLEVEL_[A-Za-z0-9_]+' | head -1 || true)
+      submissions=0
+      [ -f "$query_submissions" ] && submissions=$(cat "$query_submissions")
+      submissions=$((submissions + 1))
+      printf '%s\n' "$submissions" > "$query_submissions"
       case "${FM_FAKE_HERDR_QUERY_MODE:-valid}" in
         valid) printf '\n%s_BEGIN\n%s\n%s_END\n' "$marker" "$root" "$marker" >> "$capture" ;;
+        delayed-valid) printf '%s\n' "$marker" > "$capture" ;;
         primary) : > "$capture"; printf '\n%s_BEGIN\n%s\n%s_END\n' "$marker" "$FM_FAKE_HERDR_PRIMARY" "$marker" >> "$capture" ;;
         wrong-repo) : > "$capture"; printf '\n%s_BEGIN\n%s\n%s_END\n' "$marker" "$root" "$marker" >> "$capture" ;;
         malformed) : > "$capture"; printf '\n%s_BEGIN\n%s\nextra\n%s_END\n' "$marker" "$root" "$marker" >> "$capture" ;;
@@ -112,7 +120,18 @@ case "${1:-} ${2:-}" in
     fi
     ;;
   "pane read")
-    cat "$capture"
+    reads=0
+    [ -f "$capture_count" ] && reads=$(cat "$capture_count")
+    reads=$((reads + 1))
+    printf '%s\n' "$reads" > "$capture_count"
+    if [ "${FM_FAKE_HERDR_QUERY_MODE:-valid}" = delayed-valid ] \
+       && [ "$reads" -ge 4 ]; then
+      marker=$(grep -oE 'FM_GIT_TOPLEVEL_[A-Za-z0-9_]+' "$capture" | head -1 || true)
+      [ -n "$marker" ] || marker=FM_GIT_TOPLEVEL_DELAYED
+      printf '\n%s_BEGIN\n%s\n%s_END\n' "$marker" "$root" "$marker"
+    else
+      cat "$capture"
+    fi
     ;;
   *) : ;;
 esac
@@ -217,12 +236,15 @@ run_settle_spawn() {
 }
 
 run_windows_herdr_spawn() {
-  local id=$1 mode=${2:-valid} query_root=${3:-$WT_DIR}
+  local id=$1 mode=${2:-valid} query_root=${3:-$WT_DIR} structured_cwd=${4:-}
   FM_HOME="$HOME_DIR" \
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
     FM_SPAWN_NO_GUARD=1 OSTYPE=msys HERDR_ENV= \
     FM_FAKE_HERDR_CAPTURE="$HOME_DIR/herdr-capture" FM_FAKE_HERDR_LOG="$HOME_DIR/herdr.log" \
+    FM_FAKE_HERDR_CAPTURE_COUNT="$HOME_DIR/herdr-capture-count" \
+    FM_FAKE_HERDR_QUERY_SUBMISSIONS="$HOME_DIR/herdr-query-submissions" \
+    FM_FAKE_HERDR_STRUCTURED_CWD="$structured_cwd" \
     FM_FAKE_HERDR_QUERY_ROOT="$query_root" FM_FAKE_HERDR_PRIMARY="$PROJ_DIR" \
     FM_FAKE_HERDR_QUERY_MODE="$mode" \
     PATH="$FAKEBIN_DIR:$PATH" \
@@ -284,6 +306,25 @@ test_windows_herdr_stale_structured_cwd_uses_git_root() {
   pass "native-Windows Herdr fallback ignores stale structured cwd and accepts the sentinel Git root"
 }
 
+test_windows_herdr_delayed_sentinel_is_observed_without_resubmit() {
+  local rec id out status submissions captures
+  id=herdr-windows-delayed-sentinel-z6
+  rec=$(make_windows_herdr_case herdr-windows-delayed-sentinel "$id")
+  read_windows_herdr_record "$rec"
+  : > "$HOME_DIR/herdr-capture" "$HOME_DIR/herdr-capture-count" "$HOME_DIR/herdr-query-submissions"
+  out=$(run_windows_herdr_spawn "$id" delayed-valid "$WT_DIR" "$PROJ_DIR")
+  status=$?
+  submissions=$(cat "$HOME_DIR/herdr-query-submissions")
+  captures=$(cat "$HOME_DIR/herdr-capture-count")
+  expect_code 0 "$status" "spawn should accept a sentinel response that appears after the initial probes"
+  assert_contains "$out" "spawned $id" "spawn did not report success after the delayed sentinel response"
+  assert_grep "worktree=$WT_DIR" "$HOME_DIR/state/$id.meta" \
+    "delayed sentinel response did not record the queried worktree"
+  [ "$submissions" = 1 ] || fail "delayed sentinel regression submitted the query $submissions times; expected exactly one"
+  [ "$captures" -ge 4 ] || fail "delayed sentinel regression did not observe a later capture; saw $captures captures"
+  pass "native-Windows Herdr fallback observes a delayed sentinel response without resubmitting the query"
+}
+
 test_windows_herdr_fallback_refuses_primary_and_unproved_roots() {
   local mode rec id out status wrong
   for mode in primary malformed missing; do
@@ -315,6 +356,7 @@ test_windows_herdr_fallback_refuses_primary_and_unproved_roots() {
 test_single_stale_first_read_is_not_accepted
 test_already_settled_pane_costs_one_confirm_sleep
 test_windows_herdr_stale_structured_cwd_uses_git_root
+test_windows_herdr_delayed_sentinel_is_observed_without_resubmit
 test_windows_herdr_fallback_refuses_primary_and_unproved_roots
 
 echo "# all fm-spawn-worktree-settle tests passed"
