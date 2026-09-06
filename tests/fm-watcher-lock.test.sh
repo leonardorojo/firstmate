@@ -436,6 +436,43 @@ wait_for_file_text() {
   return 1
 }
 
+# The MSYS direct-lock race deliberately leaves the winner waiting for a
+# release file. Keep that release and every child under a bounded trap so a
+# failed assertion or interrupted run cannot strand the race behind an
+# unbounded wait.
+_FM_TEST_MSYS_CONCURRENCY_ACTIVE=0
+_FM_TEST_MSYS_CONCURRENCY_RELEASE=
+_FM_TEST_MSYS_CONCURRENCY_PIDS=
+_FM_TEST_MSYS_CONCURRENCY_EXTRA_PIDS=
+
+fm_test_msys_direct_concurrency_cleanup() {
+  local pid i live job_pids
+  [ "${_FM_TEST_MSYS_CONCURRENCY_ACTIVE:-0}" -eq 1 ] || return 0
+  job_pids="${_FM_TEST_MSYS_CONCURRENCY_PIDS:-} ${_FM_TEST_MSYS_CONCURRENCY_EXTRA_PIDS:-} $(jobs -pr 2>/dev/null || true)"
+  [ -n "${_FM_TEST_MSYS_CONCURRENCY_RELEASE:-}" ] && : > "$_FM_TEST_MSYS_CONCURRENCY_RELEASE"
+  i=0
+  while [ "$i" -lt 100 ]; do
+    live=0
+    for pid in $job_pids; do
+      [ -n "$pid" ] || continue
+      is_live_non_zombie "$pid" && live=1
+    done
+    [ "$live" -eq 0 ] && break
+    sleep 0.05
+    i=$((i + 1))
+  done
+  for pid in $job_pids; do
+    [ -n "$pid" ] || continue
+    is_live_non_zombie "$pid" && kill -KILL "$pid" 2>/dev/null || true
+  done
+  for pid in $job_pids; do
+    [ -n "$pid" ] || continue
+    wait "$pid" 2>/dev/null || true
+  done
+  _FM_TEST_MSYS_CONCURRENCY_PIDS=
+  _FM_TEST_MSYS_CONCURRENCY_EXTRA_PIDS=
+}
+
 msys_dead_pid() {
   local candidate=56332
   if ps -p "$candidate" 2>/dev/null | awk -v pid="$candidate" 'NR > 1 && $1 == pid { found=1 } END { exit found ? 0 : 1 }'; then
@@ -547,6 +584,13 @@ test_msys_direct_directory_lock_single_winner_and_live_holder() {
   release="$dir/release"
   make_fake_msys_no_symlink_bin "$fakebin" "$marker"
   : > "$dir/wins"
+  _FM_TEST_MSYS_CONCURRENCY_ACTIVE=1
+  _FM_TEST_MSYS_CONCURRENCY_RELEASE="$release"
+  _FM_TEST_MSYS_CONCURRENCY_PIDS=
+  _FM_TEST_MSYS_CONCURRENCY_EXTRA_PIDS=
+  trap 'fm_test_msys_direct_concurrency_cleanup; fm_test_cleanup' EXIT
+  trap 'fm_test_msys_direct_concurrency_cleanup; exit 130' INT
+  trap 'fm_test_msys_direct_concurrency_cleanup; exit 143' TERM
   pids=
   i=1
   while [ "$i" -le 16 ]; do
@@ -561,13 +605,16 @@ test_msys_direct_directory_lock_single_winner_and_live_holder() {
       fi
     ' _ "$LIB" "$lock" "$dir/wins" "$ready" "$release" &
     pids="$pids $!"
+    _FM_TEST_MSYS_CONCURRENCY_PIDS="$pids"
     i=$((i + 1))
   done
   wait_for_file_text "$ready" ready || fail "MSYS direct lock had no winner"
+  # Signal before the winner-count assertion too: any failure after readiness
+  # must release the holder before fail() exits through the cleanup trap.
+  : > "$release"
   wins=$(awk 'NF { c++ } END { print c + 0 }' "$dir/wins")
   [ "$wins" -eq 1 ] || fail "MSYS direct lock had $wins concurrent winners"
-  : > "$release"
-  for pid in $pids; do wait "$pid" 2>/dev/null || true; done
+  fm_test_msys_direct_concurrency_cleanup
   [ ! -e "$lock" ] && [ ! -L "$lock" ] || fail "MSYS direct lock winner did not release"
   [ ! -s "$marker" ] || fail "MSYS direct lock concurrency invoked ln -s"
 
@@ -576,6 +623,7 @@ test_msys_direct_directory_lock_single_winner_and_live_holder() {
   printf '%s\n' "$dead" > "$lock/pid"
   sleep 30 &
   holder=$!
+  _FM_TEST_MSYS_CONCURRENCY_EXTRA_PIDS="$holder"
   rm -f "$lock/pid"
   printf '%s\n' "$holder" > "$lock/pid"
   out=$(PATH="$fakebin:$PATH" FM_TEST_LN_USED="$marker" FM_STATE_OVERRIDE="$state" bash -c '
@@ -585,13 +633,18 @@ test_msys_direct_directory_lock_single_winner_and_live_holder() {
     printf "rc=%s held=%s pid=%s\n" "$rc" "${FM_LOCK_HELD_PID:-}" "$(cat "$2/pid" 2>/dev/null || true)"
   ' _ "$LIB" "$lock") || rc=$?
   kill "$holder" 2>/dev/null || true
-  wait "$holder" 2>/dev/null || true
+  fm_test_msys_direct_concurrency_cleanup
   [ "${rc:-0}" -eq 0 ] || fail "MSYS live-holder check command failed (rc=$rc)"
   case "$out" in
     *"rc=1"*"held=$holder"*"pid=$holder"*) ;;
     *) fail "MSYS live holder was reclaimed or not reported: $out" ;;
   esac
   rm -rf "$lock"
+  _FM_TEST_MSYS_CONCURRENCY_ACTIVE=0
+  trap - EXIT INT TERM
+  trap fm_test_cleanup EXIT
+  trap 'fm_test_cleanup; exit 130' INT
+  trap 'fm_test_cleanup; exit 143' TERM
   pass "MSYS concurrent losers are clean and live directory owners are not reclaimed"
 }
 
