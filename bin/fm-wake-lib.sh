@@ -450,8 +450,23 @@ fm_lock_link_owner() {
 
 fm_lock_points_to_owner() {
   local lockdir=$1 ownerdir=$2 actual
+  if [ -d "$lockdir" ] && [ ! -L "$lockdir" ] && [ "$lockdir" = "$ownerdir" ]; then
+    return 0
+  fi
   actual=$(readlink "$lockdir" 2>/dev/null) || return 1
   [ "$actual" = "$ownerdir" ]
+}
+
+fm_lock_publication_matches() {  # <lockdir> <owner-path-or-legacy-token>
+  local lockdir=$1 owner=$2 pid
+  case "$owner" in
+    legacy:*)
+      pid=${owner#legacy:}
+      [ -d "$lockdir" ] && [ ! -L "$lockdir" ] || return 1
+      [ "$(cat "$lockdir/pid" 2>/dev/null || true)" = "$pid" ]
+      ;;
+    *) fm_lock_points_to_owner "$lockdir" "$owner" ;;
+  esac
 }
 
 fm_lock_discard_owner() {
@@ -473,7 +488,7 @@ fm_lock_claim_blocked_by_steal() {
   local lockdir=$1 allowed_steal_owner=${2:-} steal
   steal="$lockdir.steal"
   [ -e "$steal" ] || [ -L "$steal" ] || return 1
-  if [ -n "$allowed_steal_owner" ] && fm_lock_points_to_owner "$steal" "$allowed_steal_owner"; then
+  if [ -n "$allowed_steal_owner" ] && fm_lock_publication_matches "$steal" "$allowed_steal_owner"; then
     return 1
   fi
   return 0
@@ -497,7 +512,12 @@ fm_lock_claim() {
   fi
   if fm_lock_claim_blocked_by_steal "$lockdir" "$allowed_steal_owner"; then
     if fm_lock_points_to_owner "$lockdir" "$ownerdir"; then
-      rm -f "$lockdir" 2>/dev/null || true
+      if [ -L "$lockdir" ]; then
+        rm -f "$lockdir" 2>/dev/null || true
+      else
+        fm_lock_clean_known_files "$lockdir"
+        rmdir "$lockdir" 2>/dev/null || true
+      fi
     fi
     fm_lock_discard_owner "$ownerdir"
     return 1
@@ -505,9 +525,38 @@ fm_lock_claim() {
   return 0
 }
 
+fm_lock_directory_publication() {
+  case "$_FM_UNAME" in
+    MSYS*|MINGW*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+fm_lock_try_create_directory() {
+  local lockdir=$1 allowed_steal_owner=${2:-} mypid
+  FM_LOCK_OWNER_DIR=
+  mkdir "$lockdir" 2>/dev/null || return 1
+  if ! fm_lock_prepare_owner "$lockdir"; then
+    fm_lock_clean_known_files "$lockdir"
+    rmdir "$lockdir" 2>/dev/null || true
+    return 1
+  fi
+  if ! fm_lock_claim "$lockdir" "$lockdir" "$allowed_steal_owner"; then
+    return 1
+  fi
+  mypid=$(cat "$lockdir/pid" 2>/dev/null || true)
+  [ -n "$mypid" ] || return 1
+  FM_LOCK_OWNER_DIR="legacy:$mypid"
+  return 0
+}
+
 fm_lock_try_create() {
   local lockdir=$1 allowed_steal_owner=${2:-} ownerdir
   FM_LOCK_OWNER_DIR=
+  if fm_lock_directory_publication; then
+    fm_lock_try_create_directory "$lockdir" "$allowed_steal_owner"
+    return
+  fi
   ownerdir=$(fm_lock_owner_dir "$lockdir") || return 1
   if [ -e "$lockdir" ] || [ -L "$lockdir" ]; then
     fm_lock_discard_owner "$ownerdir"
@@ -942,7 +991,7 @@ fm_lock_try_acquire() {
     FM_LOCK_OWNER_DIR=
     return 1
   fi
-  if ! fm_lock_points_to_owner "$steal" "$steal_owner"; then
+  if ! fm_lock_publication_matches "$steal" "$steal_owner"; then
     fm_lock_release "$steal"
     FM_LOCK_HELD_PID=$(cat "$lockdir/pid" 2>/dev/null || true)
     FM_LOCK_OWNER_DIR=
