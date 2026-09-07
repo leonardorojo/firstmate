@@ -18,7 +18,9 @@ STATE_DIR="$HOME_DIR/state with spaces"
 LAUNCH_DIR="$HOME_DIR/launch dir with spaces"
 BRIEF="$HOME_DIR/brief with spaces.md"
 PI_DIR="$HOME_DIR/fake pi with spaces"
-mkdir -p "$FAKEBIN" "$STATE_DIR" "$PI_DIR" "$LAUNCH_DIR"
+AUX_SCRIPT="$HOME_DIR/auxiliary script with spaces.sh"
+DEGRADED_BIN="$TMP_ROOT/degraded-bin"
+mkdir -p "$FAKEBIN" "$STATE_DIR" "$PI_DIR" "$LAUNCH_DIR" "$DEGRADED_BIN"
 UNIXBIN="$TMP_ROOT/unixbin"
 mkdir -p "$UNIXBIN"
 cat > "$UNIXBIN/uname" <<'SH'
@@ -61,7 +63,7 @@ bash_win=$(printf '%s' "$rest" | sed -n 's/^"\([^"]*\)" "\([^"]*\)"$/\1/p')
 script_win=$(printf '%s' "$rest" | sed -n 's/^"\([^"]*\)" "\([^"]*\)"$/\2/p')
 [ -n "$bash_win" ] && [ -n "$script_win" ] || exit 93
 script_msys=$(cygpath -u "$script_win") || exit 94
-exec /usr/bin/bash "$script_msys"
+PATH="${FM_FAKE_DEGRADED_PATH:?}" exec /usr/bin/bash "$script_msys"
 SH
 chmod +x "$FAKEBIN/cmd.exe"
 cat > "$PI_DIR/pi" <<'SH'
@@ -75,6 +77,13 @@ count=0
 printf '%s\n' "$((count + 1))" > "$FM_FAKE_PI_COUNT"
 SH
 chmod +x "$PI_DIR/pi"
+cat > "$AUX_SCRIPT" <<'SH'
+#!/usr/bin/env bash
+set -u
+command -v env > "${FM_FAKE_ENV_PATH:?}"
+printf '%s\n' auxiliary-ok > "${FM_FAKE_AUX_MARKER:?}"
+SH
+chmod +x "$AUX_SCRIPT"
 
 shell_quote() {
   printf "'"
@@ -82,10 +91,13 @@ shell_quote() {
   printf "'"
 }
 
+HOST_PATH="$PATH"
 export PATH="$FAKEBIN:$PATH"
 export BACKEND=herdr OSTYPE=msys FM_FAKE_CMD_LOG="$TMP_ROOT/cmd.log"
 export FM_FAKE_PI_ENV="$TMP_ROOT/pi.env" FM_FAKE_PI_ARGS="$TMP_ROOT/pi.args"
 export FM_FAKE_PI_COUNT="$TMP_ROOT/pi.count"
+export FM_FAKE_DEGRADED_PATH="$DEGRADED_BIN"
+export FM_FAKE_ENV_PATH="$TMP_ROOT/env.path" FM_FAKE_AUX_MARKER="$TMP_ROOT/aux.marker"
 
 # The script-boundary wrapper stays native-Windows-Herdr only. tmux and
 # Unix/macOS Herdr keep the historical direct-text launch path.
@@ -105,7 +117,7 @@ BASH_NATIVE=$(spawn_windows_herdr_resolve_bash) \
   || fail "bash resolution did not cross the Windows executable boundary"
 
 BRIEF_PAYLOAD=$(cat "$BRIEF")
-PI_PAYLOAD="GOTMPDIR=$(shell_quote "$STATE_DIR/gotmp") TRACEPARENT='00-0123456789abcdef0123456789abcdef-0123456789abcdef-01' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI FM_PI_HARNESS=pi $(shell_quote "$PI_DIR/pi") --model test -e $(shell_quote "$STATE_DIR/pi-ext.ts") $(shell_quote "$BRIEF_PAYLOAD")"
+PI_PAYLOAD="$(shell_quote "$AUX_SCRIPT"); GOTMPDIR=$(shell_quote "$STATE_DIR/gotmp") TRACEPARENT='00-0123456789abcdef0123456789abcdef-0123456789abcdef-01' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI FM_PI_HARNESS=pi $(shell_quote "$PI_DIR/pi") --model test -e $(shell_quote "$STATE_DIR/pi-ext.ts") $(shell_quote "$BRIEF_PAYLOAD")"
 LAUNCH_SCRIPT="$LAUNCH_DIR/launch.sh"
 export FM_FAKE_SCRIPT_MSYS="$LAUNCH_SCRIPT"
 WRAPPED=$(spawn_windows_herdr_wrap_launch "$BASH_NATIVE" "$LAUNCH_SCRIPT" "$PI_PAYLOAD") \
@@ -115,14 +127,24 @@ WRAPPED=$(spawn_windows_herdr_wrap_launch "$BASH_NATIVE" "$LAUNCH_SCRIPT" "$PI_P
   || fail "wrapper did not send only the two quoted Windows paths"
 [ "$(sed -n '1p' "$LAUNCH_SCRIPT")" = '#!/usr/bin/env bash' ] \
   || fail "launch script is missing its bash shebang"
-[ "$(sed -n '2p' "$LAUNCH_SCRIPT")" = "$PI_PAYLOAD" ] \
-  || fail "launch script does not carry the exact POSIX payload"
-[ "$(wc -l < "$LAUNCH_SCRIPT")" = 2 ] \
+[ "$(sed -n '2p' "$LAUNCH_SCRIPT")" = 'export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"' ] \
+  || fail "launch script is missing the POSIX PATH bootstrap"
+[ "$(sed -n '3p' "$LAUNCH_SCRIPT")" = "$PI_PAYLOAD" ] \
+  || fail "launch script does not carry the exact POSIX payload after bootstrap"
+[ "$(wc -l < "$LAUNCH_SCRIPT")" = 3 ] \
   || fail "launch script carried unexpected extra content"
 pass "launch payload was materialized byte-for-byte into a task-local .sh file"
 
+if PATH="$DEGRADED_BIN" /usr/bin/bash -c 'command -v env >/dev/null 2>&1'; then
+  fail "env was resolvable before the launch-script PATH bootstrap"
+fi
+pass "degraded Bash PATH cannot resolve env before bootstrap"
 FM_FAKE_CMD_LOG="$TMP_ROOT/cmd.log" bash -c 'cmd.exe "$1"' _ "$WRAPPED" \
   || fail "fake cmd.exe rejected the script-boundary wrapper"
+[ -f "$TMP_ROOT/env.path" ] && [ -s "$TMP_ROOT/env.path" ] \
+  || fail "env was not resolvable after the launch-script PATH bootstrap"
+[ "$(cat "$TMP_ROOT/aux.marker")" = auxiliary-ok ] \
+  || fail "an auxiliary #!/usr/bin/env bash script did not run after bootstrap"
 [ "$(cat "$TMP_ROOT/pi.count")" = 1 ] \
   || fail "Pi launch did not occur exactly once"
 grep -Fx 'FM_PI_HARNESS=pi' "$TMP_ROOT/pi.env" >/dev/null \
@@ -149,20 +171,40 @@ assert_not_contains "$(cat "$TMP_ROOT/cmd.log")" 'bash -c' \
   "the wrapper still routed the payload through bash -c"
 assert_not_contains "$(cat "$TMP_ROOT/cmd.log")" "$PI_DIR/pi" \
   "the Pi executable path leaked onto the cmd.exe command line"
+assert_not_contains "$(cat "$TMP_ROOT/cmd.log")" 'export PATH=' \
+  "the launch-script PATH bootstrap leaked onto the cmd.exe command line"
 pass "fake cmd.exe receives only the two paths and Pi argv and brief survive exactly"
 
-if command -v cmd.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1 \
-   && command -v bash.exe >/dev/null 2>&1; then
+REAL_CMD=$(PATH="$HOST_PATH" type -P -- cmd.exe 2>/dev/null || true)
+REAL_BASH_BIN=$(PATH="$HOST_PATH" type -P -- bash.exe 2>/dev/null || true)
+if [ -n "$REAL_CMD" ] && [ -n "$REAL_BASH_BIN" ] \
+   && command -v cygpath >/dev/null 2>&1; then
   REAL_DIR="$TMP_ROOT/real cmd marker"
   mkdir -p "$REAL_DIR"
   REAL_MARKER="$REAL_DIR/reached marker.txt"
+  REAL_ENV_PATH="$REAL_DIR/env path.txt"
+  REAL_AUX="$REAL_DIR/real auxiliary.sh"
   REAL_SCRIPT="$REAL_DIR/launch.sh"
-  printf '%s\n' '#!/usr/bin/env bash' "touch '$REAL_MARKER'" > "$REAL_SCRIPT"
-  REAL_BASH=$(cygpath -w -- "$(type -P -- bash.exe)")
+  cat > "$REAL_AUX" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' auxiliary-ok > "${FM_REAL_AUX_MARKER:?}"
+SH
+  chmod +x "$REAL_AUX"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"' \
+    "command -v env > $(shell_quote "$REAL_ENV_PATH")" \
+    "$(shell_quote "$REAL_AUX")" \
+    "touch $(shell_quote "$REAL_MARKER")" > "$REAL_SCRIPT"
+  chmod +x "$REAL_SCRIPT"
+  REAL_BASH=$(cygpath -w -- "$REAL_BASH_BIN")
   REAL_SCRIPT_WIN=$(cygpath -w -- "$REAL_SCRIPT")
-  if cmd.exe /d /v:off /s /c "\"$REAL_BASH\" \"$REAL_SCRIPT_WIN\"" \
-    >/dev/null 2>&1 && [ -f "$REAL_MARKER" ]; then
-    pass "real cmd.exe reaches native Bash through a launch script"
+  export FM_REAL_AUX_MARKER="$REAL_DIR/real auxiliary marker"
+  if PATH="$DEGRADED_BIN" "$REAL_CMD" /d /v:off /s /c "\"$REAL_BASH\" \"$REAL_SCRIPT_WIN\"" \
+    >/dev/null 2>&1 && [ -f "$REAL_MARKER" ] \
+    && [ -s "$REAL_ENV_PATH" ] \
+    && [ "$(cat "$FM_REAL_AUX_MARKER")" = auxiliary-ok ]; then
+    pass "real cmd.exe reaches native Bash and bootstrap resolves env plus env-shebang"
   else
     pass "real cmd.exe marker regression skipped because this MSYS shell cannot safely submit the native command line"
   fi

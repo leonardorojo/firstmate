@@ -134,7 +134,7 @@ spawn_windows_herdr_wrap_launch() {  # <bash-windows> <script-posix> <payload>
     echo "error: native-Windows Herdr launch requires cygpath to convert the launch script path" >&2
     return 1
   }
-  if ! printf '%s\n' '#!/usr/bin/env bash' "$payload" > "$script_posix" 2>/dev/null; then
+  if ! printf '%s\n' '#!/usr/bin/env bash' 'export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"' "$payload" > "$script_posix" 2>/dev/null; then
     echo "error: could not write the native-Windows launch script '$script_posix'" >&2
     return 1
   fi
