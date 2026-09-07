@@ -2939,6 +2939,21 @@ test_capture_works_around_small_lines_bug() {
   pass "fm_backend_herdr_capture: works around the verified small-N '--lines' bug by over-fetching and trimming locally"
 }
 
+test_git_top_level_capture_uses_unwrapped_source_for_long_root() {
+  local dir log resp fb out root
+  dir="$TMP_ROOT/git-top-level-unwrapped"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  root="C:/$(printf 'x%.0s' $(seq 1 240))"
+  printf '%s\n' 'FM_QUERY_BEGIN' "$root" 'FM_QUERY_END' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_git_top_level_capture default:w1:p2 FM_QUERY' "$ROOT" )
+  [ "$out" = "$root" ] || fail "Git-root capture did not preserve the long unwrapped root as one logical line"
+  [ "${#out}" -gt 200 ] || fail "long-root regression fixture was not wider than a typical pane viewport"
+  assert_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''read'$'\x1f''w1:p2'$'\x1f''--source'$'\x1f''recent-unwrapped'$'\x1f''--lines'$'\x1f''200' \
+    "Git-root capture did not request Herdr's recent-unwrapped source with the generous fetch bound"
+  pass "Git-root capture uses recent-unwrapped and accepts a long root as one logical line"
+}
+
 test_capture_preserves_pane_read_failure() {
   local dir log resp fb out status
   dir="$TMP_ROOT/capture-fail"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -3015,7 +3030,7 @@ test_git_top_level_parser_accepts_bounded_sentinel_protocol() {
       . "$0/bin/backends/herdr.sh"
       fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
       fm_backend_herdr_send_text_line() { printf "%s\n" "$2" > "$FM_HERDR_QUERY_LOG"; }
-      fm_backend_herdr_capture() { cat "$FM_HERDR_QUERY_OUTPUT"; }
+      fm_backend_herdr_capture_source() { cat "$FM_HERDR_QUERY_OUTPUT"; }
       FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
     ' "$ROOT")
   [ "$out" = "/tmp/worktree with spaces" ] || fail "sentinel query did not return the Git root with spaces, got '$out'"
@@ -3028,7 +3043,7 @@ test_git_top_level_parser_accepts_bounded_sentinel_protocol() {
     . "$0/bin/backends/herdr.sh"
     fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
     fm_backend_herdr_send_text_line() { :; }
-    fm_backend_herdr_capture() { cat "$FM_HERDR_QUERY_OUTPUT"; }
+    fm_backend_herdr_capture_source() { cat "$FM_HERDR_QUERY_OUTPUT"; }
     FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
   ' "$ROOT" >/dev/null 2>&1; then
     fail "sentinel query accepted multiple lines between its markers"
@@ -3038,7 +3053,7 @@ test_git_top_level_parser_accepts_bounded_sentinel_protocol() {
     . "$0/bin/backends/herdr.sh"
     fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
     fm_backend_herdr_send_text_line() { :; }
-    fm_backend_herdr_capture() { cat "$FM_HERDR_QUERY_OUTPUT"; }
+    fm_backend_herdr_capture_source() { cat "$FM_HERDR_QUERY_OUTPUT"; }
     FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
   ' "$ROOT" >/dev/null 2>&1; then
     fail "sentinel query accepted output without its markers"
@@ -3049,7 +3064,7 @@ test_git_top_level_parser_accepts_bounded_sentinel_protocol() {
     . "$0/bin/backends/herdr.sh"
     fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
     fm_backend_herdr_send_text_line() { :; }
-    fm_backend_herdr_capture() { cat "$FM_HERDR_QUERY_OUTPUT"; }
+    fm_backend_herdr_capture_source() { cat "$FM_HERDR_QUERY_OUTPUT"; }
     FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
   ' "$ROOT" >/dev/null 2>&1; then
     fail "sentinel query accepted multiple sentinel-delimited roots"
@@ -3091,7 +3106,7 @@ test_git_top_level_real_cmd_execution_when_available() {
       cmd.exe //d //s //c "call $FM_REAL_CMD_NATIVE_SCRIPT" \
         > "$FM_REAL_CMD_OUTPUT" 2>&1
     }
-    fm_backend_herdr_capture() { cat "$FM_REAL_CMD_OUTPUT"; }
+    fm_backend_herdr_capture_source() { cat "$FM_REAL_CMD_OUTPUT"; }
     FM_REAL_CMD_NATIVE_REPO="$native_repo" FM_REAL_CMD_NATIVE_SCRIPT="$native_script" \
       FM_REAL_CMD_SCRIPT="$script" FM_REAL_CMD_OUTPUT="$output" \
       FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 \
@@ -3113,7 +3128,7 @@ test_git_top_level_real_cmd_execution_when_available() {
       cmd.exe //d //s //c "call $FM_REAL_CMD_NATIVE_SCRIPT" \
         > "$FM_REAL_CMD_OUTPUT" 2>&1
     }
-    fm_backend_herdr_capture() { cat "$FM_REAL_CMD_OUTPUT"; }
+    fm_backend_herdr_capture_source() { cat "$FM_REAL_CMD_OUTPUT"; }
     FM_REAL_CMD_NATIVE_REPO="$(cygpath -w -- "$nonrepo")" \
       FM_REAL_CMD_NATIVE_SCRIPT="$native_script" FM_REAL_CMD_SCRIPT="$script" \
       FM_REAL_CMD_OUTPUT="$output" \
@@ -4716,6 +4731,7 @@ test_parse_target
 test_normalize_key
 test_capture_calls_pane_read
 test_capture_works_around_small_lines_bug
+test_git_top_level_capture_uses_unwrapped_source_for_long_root
 test_capture_preserves_pane_read_failure
 test_send_key_normalizes_and_targets_pane
 test_kill_is_best_effort

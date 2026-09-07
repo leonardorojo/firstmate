@@ -120,11 +120,18 @@ case "${1:-} ${2:-}" in
     fi
     ;;
   "pane read")
+    source=recent
+    args=("$@")
+    for ((i=0; i<${#args[@]}; i++)); do
+      [ "${args[$i]}" = --source ] || continue
+      source=${args[$((i + 1))]:-}
+    done
     reads=0
     [ -f "$capture_count" ] && reads=$(cat "$capture_count")
     reads=$((reads + 1))
     printf '%s\n' "$reads" > "$capture_count"
-    if [ "${FM_FAKE_HERDR_QUERY_MODE:-valid}" = delayed-valid ] \
+    if [ "$source" = recent-unwrapped ] \
+       && [ "${FM_FAKE_HERDR_QUERY_MODE:-valid}" = delayed-valid ] \
        && [ "$reads" -ge 4 ]; then
       marker=$(grep -oE 'FM_GIT_TOPLEVEL_[A-Za-z0-9_]+' "$capture" | head -1 || true)
       [ -n "$marker" ] || marker=FM_GIT_TOPLEVEL_DELAYED
@@ -322,6 +329,8 @@ test_windows_herdr_delayed_sentinel_is_observed_without_resubmit() {
     "delayed sentinel response did not record the queried worktree"
   [ "$submissions" = 1 ] || fail "delayed sentinel regression submitted the query $submissions times; expected exactly one"
   [ "$captures" -ge 4 ] || fail "delayed sentinel regression did not observe a later capture; saw $captures captures"
+  assert_contains "$(cat "$HOME_DIR/herdr.log")" "pane read w1:p2 --source recent-unwrapped --lines 200" \
+    "delayed sentinel regression did not use the unwrapped capture source"
   pass "native-Windows Herdr fallback observes a delayed sentinel response without resubmitting the query"
 }
 

@@ -2548,6 +2548,21 @@ fm_backend_herdr_current_path() {  # <target>
 # separate, bounded fallback for the native Windows/MSYS Herdr path where that
 # field can stay at the pane's creation cwd while the visible shell has moved.
 # The begin/end lines are the only authority - prompt rendering is ignored.
+# fm_backend_herdr_capture_source <target> <source> <lines>: bounded plain-text
+# capture with an explicitly selected Herdr source. Callers use this only when
+# the source itself is part of their protocol; ordinary captures remain on
+# fm_backend_herdr_capture below.
+fm_backend_herdr_capture_source() {  # <target> <source> <lines>
+  local source=$2 lines=${3:-200} fetch out
+  fm_backend_herdr_target_ready "$1" || return 1
+  case "$lines" in ''|*[!0-9]*) lines=200 ;; esac
+  fetch=$lines
+  case "$fetch" in ''|*[!0-9]*) fetch=200 ;; *) [ "$fetch" -ge 200 ] || fetch=200 ;; esac
+  out=$(fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" pane read "$FM_BACKEND_HERDR_PANE" \
+    --source "$source" --lines "$fetch" 2>/dev/null) || return 1
+  printf '%s' "$out" | tail -n "$lines"
+}
+
 # fm_backend_herdr_git_top_level_capture: inspect one capture for the exact
 # sentinel-delimited Git-root response submitted by
 # fm_backend_herdr_git_top_level. This deliberately does not submit anything;
@@ -2558,7 +2573,7 @@ fm_backend_herdr_git_top_level_capture() {  # <target> <marker>
   local begin="${marker}_BEGIN" end="${marker}_END"
   local out root
   out=$(FM_BACKEND_HERDR_RPC_TIMEOUT=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_RPC_TIMEOUT:-2} \
-    fm_backend_herdr_capture "$target" 200 2>/dev/null | tr -d '\r' || true)
+    fm_backend_herdr_capture_source "$target" recent-unwrapped 200 2>/dev/null | tr -d '\r' || true)
   root=$(printf '%s\n' "$out" | awk -v begin="$begin" -v end="$end" '
     $0 == begin { inside=1; count=0; value=""; next }
     $0 == end { if (inside && count == 1) { print value; found=1 }; inside=0; next }
