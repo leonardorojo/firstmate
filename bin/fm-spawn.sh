@@ -3563,25 +3563,51 @@ spawn_record_traceparent() {
   return "$status"
 }
 
+NATIVE_WINDOWS_HERDR=0
+NATIVE_WINDOWS_BASH=
+if spawn_windows_herdr_native_capable; then
+  NATIVE_WINDOWS_HERDR=1
+  NATIVE_WINDOWS_BASH=$(spawn_windows_herdr_resolve_bash) || {
+    echo "error: native-Windows Herdr launch requires a usable bash.exe and cygpath" >&2
+    exit 1
+  }
+fi
+
 # Export GOTMPDIR into the crewmate's pane shell so the agent and every child
-# process (go build, go test, ...) inherit it. Sent before the launch command so
-# the env is set when the agent starts; the brief sleep lets the export land.
-spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
-# Send through the exact channel that already ships GOTMPDIR, so every backend
-# and harness - ship, scout, and secondmate - gets it before launch. Skipped
-# entirely when trace context is off.
-if [ -n "$SPAWN_TRACEPARENT" ]; then
-  if spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then
-    if ! spawn_record_traceparent; then
+# process (go build, go test, ...) inherit it. Native-Windows Herdr has a
+# cmd.exe foreground, so its assignment is folded into the POSIX payload below
+# instead of being sent as a standalone cmd.exe command.
+NATIVE_WINDOWS_TRACE_ASSIGN=
+if [ "$NATIVE_WINDOWS_HERDR" = 1 ]; then
+  if [ -n "$SPAWN_TRACEPARENT" ]; then
+    if spawn_record_traceparent; then
+      NATIVE_WINDOWS_TRACE_ASSIGN="TRACEPARENT=$(shell_quote "$SPAWN_TRACEPARENT")"
+    else
       LAUNCH="unset TRACEPARENT; $LAUNCH"
     fi
-  else
-    TRACE_SEND_STATUS=$?
-    if [ "$TRACE_SEND_STATUS" -eq 2 ]; then
-      echo "error: trace-context input could not be cleared for $W; refusing to append the launch command" >&2
-      exit 1
+  fi
+  NATIVE_WINDOWS_GOTMP_ASSIGN="GOTMPDIR=$(shell_quote "$TASK_TMP/gotmp")"
+  LAUNCH="$NATIVE_WINDOWS_GOTMP_ASSIGN${NATIVE_WINDOWS_TRACE_ASSIGN:+ $NATIVE_WINDOWS_TRACE_ASSIGN} $LAUNCH"
+else
+  # Send through the exact channel that already ships GOTMPDIR, so every
+  # backend and harness - ship, scout, and secondmate - gets it before launch.
+  spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
+  # Send through the exact channel that already ships TRACEPARENT, so every
+  # backend and harness receives it before launch. Skipped entirely when trace
+  # context is off.
+  if [ -n "$SPAWN_TRACEPARENT" ]; then
+    if spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then
+      if ! spawn_record_traceparent; then
+        LAUNCH="unset TRACEPARENT; $LAUNCH"
+      fi
+    else
+      TRACE_SEND_STATUS=$?
+      if [ "$TRACE_SEND_STATUS" -eq 2 ]; then
+        echo "error: trace-context input could not be cleared for $W; refusing to append the launch command" >&2
+        exit 1
+      fi
+      LAUNCH="unset TRACEPARENT; $LAUNCH"
     fi
-    LAUNCH="unset TRACEPARENT; $LAUNCH"
   fi
 fi
 if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
@@ -3602,6 +3628,9 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
     LAUNCH_ENV_PREFIX="$LAUNCH_ENV_PREFIX "'${TRACEPARENT+"TRACEPARENT=$TRACEPARENT"}'
   fi
   LAUNCH="$LAUNCH_ENV_PREFIX /bin/sh -c $(shell_quote "$LAUNCH")"
+fi
+if [ "$NATIVE_WINDOWS_HERDR" = 1 ]; then
+  LAUNCH=$(spawn_windows_herdr_wrap_launch "$NATIVE_WINDOWS_BASH" "$LAUNCH") || exit 1
 fi
 sleep 0.3
 spawn_send_literal "$T" "$LAUNCH"

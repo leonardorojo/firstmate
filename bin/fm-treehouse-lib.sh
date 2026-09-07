@@ -56,3 +56,71 @@ fm_treehouse_resolve_command() {  # <backend>
     esac
   fi
 }
+
+# Native Windows Herdr keeps a cmd.exe foreground, while fm-spawn's launch
+# templates are POSIX shell programs. Restrict this boundary to the
+# MSYS/MINGW/Cygwin Herdr case; every other backend receives the composed launch
+# text directly.
+spawn_windows_herdr_native_capable() {
+  [ "${BACKEND:-}" = herdr ] || return 1
+  fm_treehouse_is_msys_mingw
+}
+
+spawn_windows_herdr_resolve_bash() {
+  local candidate native
+  candidate=$(type -P -- bash.exe 2>/dev/null || type -P -- bash 2>/dev/null) || return 1
+  [ -x "$candidate" ] || return 1
+  case "$candidate" in
+    /*)
+      command -v cygpath >/dev/null 2>&1 || return 1
+      native=$(cygpath -w -- "$candidate" 2>/dev/null) || return 1
+      ;;
+    [A-Za-z]:\\*) native=$candidate ;;
+    *) return 1 ;;
+  esac
+  case "$native" in
+    [A-Za-z]:\\*) printf '%s' "$native" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Quote one argv item for the native Windows command-line parser. The outer
+# cmd.exe command supplies the surrounding command string; doubling only the
+# backslashes that precede a quote or the closing quote preserves the POSIX
+# payload bytes that Bash must execute.
+spawn_windows_herdr_cmd_arg() {
+  local value=$1 out='"' ch i slashes=0
+  for ((i = 0; i < ${#value}; i++)); do
+    ch=${value:i:1}
+    if [ "$ch" = "\\" ]; then
+      slashes=$((slashes + 1))
+      continue
+    fi
+    while [ "$slashes" -gt 0 ]; do
+      out="${out}\\"
+      slashes=$((slashes - 1))
+    done
+    if [ "$ch" = '"' ]; then
+      out="${out}\\"
+    fi
+    out="${out}${ch}"
+  done
+  while [ "$slashes" -gt 0 ]; do
+    out="${out}\\"
+    out="${out}\\"
+    slashes=$((slashes - 1))
+  done
+  out="${out}\""
+  printf '%s' "$out"
+}
+
+spawn_windows_herdr_wrap_launch() {
+  local bash_executable=$1 payload=$2 bash_arg payload_arg
+  command -v cmd.exe >/dev/null 2>&1 || {
+    echo "error: native-Windows Herdr launch requires cmd.exe" >&2
+    return 1
+  }
+  bash_arg=$(spawn_windows_herdr_cmd_arg "$bash_executable") || return 1
+  payload_arg=$(spawn_windows_herdr_cmd_arg "$payload") || return 1
+  printf 'cmd.exe /d /v:off /s /c "%s -c %s"' "$bash_arg" "$payload_arg"
+}
