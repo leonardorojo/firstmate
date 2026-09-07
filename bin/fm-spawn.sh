@@ -3630,7 +3630,11 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   LAUNCH="$LAUNCH_ENV_PREFIX /bin/sh -c $(shell_quote "$LAUNCH")"
 fi
 if [ "$NATIVE_WINDOWS_HERDR" = 1 ]; then
-  LAUNCH=$(spawn_windows_herdr_wrap_launch "$NATIVE_WINDOWS_BASH" "$LAUNCH") || exit 1
+  # cmd.exe re-parses its own command line, so the POSIX payload cannot survive
+  # being sent inline. Write the exact payload to a task-local .sh script and
+  # send cmd.exe only bash.exe plus that script (bin/fm-treehouse-lib.sh).
+  LAUNCH=$(spawn_windows_herdr_wrap_launch \
+    "$NATIVE_WINDOWS_BASH" "$TASK_TMP/launch.sh" "$LAUNCH") || exit 1
 fi
 sleep 0.3
 spawn_send_literal "$T" "$LAUNCH"

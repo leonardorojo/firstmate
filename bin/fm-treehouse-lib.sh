@@ -114,13 +114,42 @@ spawn_windows_herdr_cmd_arg() {
   printf '%s' "$out"
 }
 
-spawn_windows_herdr_wrap_launch() {
-  local bash_executable=$1 payload=$2 bash_arg payload_arg
+# Materialize a POSIX launch payload as a task-local .sh file and wrap only the
+# two Windows paths (bash.exe and the script) for the cmd.exe boundary.
+# cmd.exe re-parses every quote and metacharacter on its own command line, so a
+# payload embedded after `bash -c` is corrupted before bash ever sees it (live
+# evidence: the payload-wrapped command line made cmd.exe refuse the path).
+# Writing the exact payload to a script keeps it off the cmd.exe command line
+# entirely; bash.exe then receives the script path as its only argument.
+# The launch-script path is POSIX (e.g. $TASK_TMP/launch.sh) and is converted
+# to native Windows form here, the same path boundary as treehouse resolution.
+spawn_windows_herdr_wrap_launch() {  # <bash-windows> <script-posix> <payload>
+  local bash_executable=$1 script_posix=$2 payload=$3
+  local script_windows bash_arg script_arg
   command -v cmd.exe >/dev/null 2>&1 || {
     echo "error: native-Windows Herdr launch requires cmd.exe" >&2
     return 1
   }
+  command -v cygpath >/dev/null 2>&1 || {
+    echo "error: native-Windows Herdr launch requires cygpath to convert the launch script path" >&2
+    return 1
+  }
+  if ! printf '%s\n' '#!/usr/bin/env bash' "$payload" > "$script_posix" 2>/dev/null; then
+    echo "error: could not write the native-Windows launch script '$script_posix'" >&2
+    return 1
+  fi
+  script_windows=$(cygpath -w -- "$script_posix" 2>/dev/null) || {
+    echo "error: cygpath could not convert the native-Windows launch script '$script_posix'" >&2
+    return 1
+  }
+  case "$script_windows" in
+    [A-Za-z]:\\*|[A-Za-z]:/*) ;;
+    *)
+      echo "error: cygpath did not return a native Windows path for the launch script '$script_posix'" >&2
+      return 1
+      ;;
+  esac
   bash_arg=$(spawn_windows_herdr_cmd_arg "$bash_executable") || return 1
-  payload_arg=$(spawn_windows_herdr_cmd_arg "$payload") || return 1
-  printf 'cmd.exe /d /v:off /s /c "%s -c %s"' "$bash_arg" "$payload_arg"
+  script_arg=$(spawn_windows_herdr_cmd_arg "$script_windows") || return 1
+  printf 'cmd.exe /d /v:off /s /c "%s %s"' "$bash_arg" "$script_arg"
 }
