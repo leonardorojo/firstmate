@@ -3015,6 +3015,57 @@ test_current_path_reads_cwd() {
   pass "fm_backend_herdr_current_path: reads pane foreground_cwd (the live running process), not the frozen creation-time cwd"
 }
 
+test_foreground_shell_family_classification() {
+  local family expected dir resp fb out
+  for family in msys cmd powershell; do
+    case "$family" in
+      msys) expected='C:/Program Files/Git/bin/bash.exe' ;;
+      cmd) expected='C:/Windows/System32/cmd.exe' ;;
+      powershell) expected='C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe' ;;
+    esac
+    dir="$TMP_ROOT/foreground-shell-$family"
+    mkdir -p "$dir/responses"
+    resp="$dir/responses"
+    printf '{"result":{"process_info":{"foreground_processes":[{"name":"%s","argv0":"%s"}]}}}\n' \
+      "$expected" "$expected" > "$resp/1.out"
+    fb=$(make_herdr_fakebin "$dir")
+    out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$dir/log" FM_HERDR_RESPONSES="$resp" \
+      bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_foreground_shell_family default:w1:p2' "$ROOT")
+    [ "$out" = "$family" ] || fail "foreground shell '$expected' classified as '$out', expected '$family'"
+  done
+  pass "fm_backend_herdr_foreground_shell_family: classifies MSYS, cmd.exe, and PowerShell from Herdr process information"
+}
+
+test_git_top_level_shell_specific_command_and_sentinel() {
+  local family dir output query out root
+  root='/tmp/worktree with spaces'
+  for family in msys cmd powershell; do
+    dir="$TMP_ROOT/git-top-level-shell-$family"
+    mkdir -p "$dir"
+    output="$dir/output"
+    query="$dir/query"
+    printf '%s\n' FM_QUERY_BEGIN "$root" FM_QUERY_END > "$output"
+    out=$( FM_TEST_SHELL="$family" FM_TEST_QUERY="$query" FM_TEST_OUTPUT="$output" \
+      bash -c '
+        . "$0/bin/backends/herdr.sh"
+        fm_backend_herdr_foreground_shell_family() { printf "%s" "$FM_TEST_SHELL"; }
+        fm_backend_herdr_send_text_line() { printf "%s" "$2" > "$FM_TEST_QUERY"; }
+        fm_backend_herdr_capture_source() { cat "$FM_TEST_OUTPUT"; }
+        FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
+      ' "$ROOT")
+    [ "$out" = "$root" ] || fail "$family Git-root query returned '$out', expected '$root'"
+    query=$(cat "$query")
+    assert_contains "$query" 'cmd.exe /d /s /c' "$family query did not preserve the Windows cmd switch spelling"
+    assert_not_contains "$query" 'D:/ S:/ C:/' "$family query contains MSYS-converted cmd switches"
+    if [ "$family" = msys ]; then
+      assert_contains "$query" "MSYS2_ARG_CONV_EXCL='*'" 'MSYS query did not disable argument conversion at the cmd.exe boundary'
+    else
+      assert_not_contains "$query" 'MSYS2_ARG_CONV_EXCL=' "$family query leaked the MSYS-only environment assignment"
+    fi
+  done
+  pass "fm_backend_herdr_git_top_level: preserves cmd switches for all foreground shells and returns one spaced sentinel root"
+}
+
 test_git_top_level_parser_accepts_bounded_sentinel_protocol() {
   local dir query_log output out
   dir="$TMP_ROOT/git-top-level-query"; mkdir -p "$dir"
@@ -3029,6 +3080,7 @@ test_git_top_level_parser_accepts_bounded_sentinel_protocol() {
     bash -c '
       . "$0/bin/backends/herdr.sh"
       fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+      fm_backend_herdr_foreground_shell_family() { printf 'cmd'; }
       fm_backend_herdr_send_text_line() { printf "%s\n" "$2" > "$FM_HERDR_QUERY_LOG"; }
       fm_backend_herdr_capture_source() { cat "$FM_HERDR_QUERY_OUTPUT"; }
       FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
@@ -3042,6 +3094,7 @@ test_git_top_level_parser_accepts_bounded_sentinel_protocol() {
   if FM_HERDR_QUERY_OUTPUT="$output" bash -c '
     . "$0/bin/backends/herdr.sh"
     fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+    fm_backend_herdr_foreground_shell_family() { printf 'cmd'; }
     fm_backend_herdr_send_text_line() { :; }
     fm_backend_herdr_capture_source() { cat "$FM_HERDR_QUERY_OUTPUT"; }
     FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
@@ -3052,6 +3105,7 @@ test_git_top_level_parser_accepts_bounded_sentinel_protocol() {
   if FM_HERDR_QUERY_OUTPUT="$output" bash -c '
     . "$0/bin/backends/herdr.sh"
     fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+    fm_backend_herdr_foreground_shell_family() { printf 'cmd'; }
     fm_backend_herdr_send_text_line() { :; }
     fm_backend_herdr_capture_source() { cat "$FM_HERDR_QUERY_OUTPUT"; }
     FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
@@ -3063,6 +3117,7 @@ test_git_top_level_parser_accepts_bounded_sentinel_protocol() {
   if FM_HERDR_QUERY_OUTPUT="$output" bash -c '
     . "$0/bin/backends/herdr.sh"
     fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+    fm_backend_herdr_foreground_shell_family() { printf 'cmd'; }
     fm_backend_herdr_send_text_line() { :; }
     fm_backend_herdr_capture_source() { cat "$FM_HERDR_QUERY_OUTPUT"; }
     FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS=1 fm_backend_herdr_git_top_level default:w1:p2 FM_QUERY
@@ -4736,6 +4791,8 @@ test_capture_preserves_pane_read_failure
 test_send_key_normalizes_and_targets_pane
 test_kill_is_best_effort
 test_current_path_reads_cwd
+test_foreground_shell_family_classification
+test_git_top_level_shell_specific_command_and_sentinel
 test_git_top_level_parser_accepts_bounded_sentinel_protocol
 test_git_top_level_real_cmd_execution_when_available
 test_busy_state_working_maps_to_busy

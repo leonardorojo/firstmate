@@ -2543,6 +2543,31 @@ fm_backend_herdr_current_path() {  # <target>
     | jq -r '.result.pane.foreground_cwd // empty' 2>/dev/null
 }
 
+# fm_backend_herdr_foreground_shell_family: classify the exact foreground shell
+# reported by Herdr for <target>. Unknown or unreadable process information
+# returns unknown so callers retain the shell-neutral command shape.
+fm_backend_herdr_foreground_shell_family() {  # <target>
+  local target=$1 session pane info candidate name
+  fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
+  session=$FM_BACKEND_HERDR_SESSION
+  pane=$FM_BACKEND_HERDR_PANE
+  info=$(FM_BACKEND_HERDR_RPC_TIMEOUT=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_RPC_TIMEOUT:-2} fm_backend_herdr_cli "$session" pane process-info "$pane" 2>/dev/null) || {
+    printf 'unknown'
+    return 0
+  }
+  while IFS= read -r candidate; do
+    name=$(printf '%s' "$candidate" | sed 's#.*[/\\]##')
+    name=${name%$'\r'}
+    name=${name,,}
+    case "$name" in
+      bash|bash.exe|sh|sh.exe) printf 'msys'; return 0 ;;
+      cmd|cmd.exe) printf 'cmd'; return 0 ;;
+      powershell|powershell.exe|pwsh|pwsh.exe) printf 'powershell'; return 0 ;;
+    esac
+  done < <(printf '%s' "$info" | jq -r '.result.process_info.foreground_processes[0]? | [.name, .argv0][]? | select(type == "string" and length > 0)' 2>/dev/null)
+  printf 'unknown'
+}
+
 # fm_backend_herdr_git_top_level: ask the shell in a pane for its Git root.
 # The structured pane cwd remains the primary signal; this is a deliberately
 # separate, bounded fallback for the native Windows/MSYS Herdr path where that
@@ -2590,7 +2615,7 @@ fm_backend_herdr_git_top_level_capture() {  # <target> <marker>
 fm_backend_herdr_git_top_level() {  # <target> <marker>
   local target=$1 marker=$2
   local begin="${marker}_BEGIN" end="${marker}_END"
-  local command_text i=0 max=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS:-3}
+  local command_text shell_family i=0 max=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_POLLS:-3}
   local interval=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_INTERVAL:-0.1}
   case "$max" in ''|*[!0-9]*|0) max=3 ;; esac
   case "$interval" in ''|*[!0-9.]*|0) interval=0.1 ;; esac
@@ -2600,6 +2625,10 @@ fm_backend_herdr_git_top_level() {  # <target> <marker>
   # The first invocation gates the sentinel block on a successful Git query;
   # the second emits the one authoritative root line without prompt parsing.
   command_text="cmd.exe /d /s /c \"git rev-parse --show-toplevel >nul 2>&1 && (echo $begin&git rev-parse --show-toplevel 2>nul&echo $end)\""
+  shell_family=$(fm_backend_herdr_foreground_shell_family "$target")
+  if [ "$shell_family" = msys ]; then
+    command_text="MSYS2_ARG_CONV_EXCL='*' $command_text"
+  fi
   FM_BACKEND_HERDR_RPC_TIMEOUT=${FM_BACKEND_HERDR_GIT_ROOT_QUERY_RPC_TIMEOUT:-2} \
     fm_backend_herdr_send_text_line "$target" "$command_text" || return 1
   while [ "$i" -lt "$max" ]; do
