@@ -1,0 +1,191 @@
+{
+  "schema_version": 1,
+  "title": "Windows-native Firstmate spike closure",
+  "audience": "maintainer-verification",
+  "status": "closed_not_yet_viable",
+  "closed_on": "2026-09-08",
+  "repository": "leonardorojo/firstmate",
+  "branch": "experiment/windows-session-lock-pi",
+  "pre_documentation_head": "3185094bbc7e9ad9288013f68bb6cde71a94f1e9",
+  "north_star": "Demonstrate that Firstmate can complete end-to-end, natively on Windows, one real .NET/WPF development task: create an isolated worker, modify code, run Windows build/tests, return the result to the Primary, and close the task, without WSL and without target-application workarounds.",
+  "architecture_under_test": {
+    "controller_shell": "Git Bash/MSYS used as Firstmate's Bash scripting layer",
+    "native_components": [
+      "Windows filesystem and processes",
+      "Herdr",
+      "Treehouse",
+      "Pi",
+      ".NET/MSBuild/WPF toolchain"
+    ],
+    "explicit_non_goal": "This spike did not attempt a PowerShell-first rewrite of Firstmate. Git Bash was the scripting/control layer while execution and target tooling remained native Windows."
+  },
+  "measured_environment": {
+    "pi": "0.84.2",
+    "herdr": "0.8.2-preview, protocol 21",
+    "treehouse": "2.0.1",
+    "jq": "1.8.2",
+    "git_bash": "Bash 5.2.37 on MINGW64",
+    "backend": "herdr"
+  },
+  "north_star_milestones": [
+    {
+      "name": "Primary session acquisition",
+      "status": "verified",
+      "evidence": "Natural Pi extension loading on Windows propagated the native Pi PID and acquired/retained the Firstmate session lock. A later manual fm-session-start invocation was proven to be a false-negative path because it bypassed that PID injection."
+    },
+    {
+      "name": "Treehouse isolation",
+      "status": "verified_in_live_runs",
+      "evidence": "Clean-room runs created isolated Treehouse worktrees and validated that the task pane entered the expected worktree."
+    },
+    {
+      "name": "Herdr task endpoint",
+      "status": "verified_in_live_runs",
+      "evidence": "Flat Herdr fallback created a task tab/pane endpoint after presentation-lock fallback; the presentation warning itself was not causal."
+    },
+    {
+      "name": "Worker Pi launch",
+      "status": "not_reproducibly_achieved",
+      "evidence": "Several independent Windows/MSYS blockers were fixed, but the final clean-room run still timed out before creating a worktree or task pane."
+    },
+    {
+      "name": "Brief delivery",
+      "status": "not_achieved_end_to_end"
+    },
+    {
+      "name": "Real .NET/WPF modification and Windows build/tests",
+      "status": "not_reached"
+    },
+    {
+      "name": "Result return to Primary",
+      "status": "not_reached"
+    },
+    {
+      "name": "Normal lifecycle closure",
+      "status": "not_reached"
+    }
+  ],
+  "implemented_windows_compatibility_layers": [
+    {
+      "commit": "83578c007b4bb9c0214379400a50f1812ecd6416",
+      "area": "Node -> Bash script launcher",
+      "result": "Windows Node callers invoke tracked .sh scripts through bash instead of direct spawn, avoiding EFTYPE while preserving POSIX direct execution."
+    },
+    {
+      "commit": "7c6080a7a2843eca932366866b34c65b2efc6759",
+      "area": "Session-lock ancestry",
+      "result": "Introduced Windows ancestry support derived from the upstream session-lock work."
+    },
+    {
+      "commit": "6a4d78bbc19662240a620e7d0b7754011fd20566",
+      "area": "Windows process capability detection",
+      "result": "Added Win32 process-information capability handling for lock ownership/liveness."
+    },
+    {
+      "commit": "0c54f47b",
+      "area": "Pi identity matching",
+      "result": "Recognized native node.exe Pi CLI identity without accepting unrelated Node processes."
+    },
+    {
+      "commit": "1f4c4dc82dd479e052e23ac14032270e4c290954",
+      "area": "Explicit native harness PID",
+      "result": "Allowed the Pi extension to pass FM_NATIVE_HARNESS_PID so Windows session acquisition does not depend on MSYS ancestry reaching node.exe."
+    },
+    {
+      "commit": "564bc742a784d924d0deb2e09f64e4fdff9abfbf",
+      "area": "MSYS lock publication",
+      "result": "Replaced unsupported symlink-style directory lock publication with Windows/MSYS-safe direct directory locking."
+    },
+    {
+      "commit": "65aa896ee098e81ac5ea836f4a5d3f2b6fe053bf",
+      "area": "MSYS lock hardening",
+      "result": "Added regression hardening around the direct-directory lock behavior."
+    },
+    {
+      "commit": "e28d808471fbb8ee554a4af408ea7c4d62c27e58",
+      "area": "Treehouse cross-shell invocation",
+      "result": "Resolved the native treehouse executable for shells/panes where bare treehouse was unavailable."
+    },
+    {
+      "commit": "24b948e93169cdafc08b903b79386990cfb3b131",
+      "area": "Herdr Git-root fallback / upstream #1796 class",
+      "result": "Used recent-unwrapped machine-readable capture so long Windows paths are not soft-wrapped during Git-root validation."
+    },
+    {
+      "commit": "358513ee182cb1041b52597d87ab2466ce87ac23",
+      "area": "Windows worker launch handoff",
+      "result": "Moved the complex POSIX worker payload into a task-local launch.sh and reduced cmd.exe to launching bash.exe plus the script path."
+    },
+    {
+      "commit": "00f2fc4e3c9f8ee5398133a5e6103d4b3c0677d6",
+      "area": "Git Bash launch environment",
+      "result": "Bootstrapped /usr/local/bin:/usr/bin:/bin in generated launch scripts so env and env-shebang helpers resolve when bash.exe is started directly from cmd.exe."
+    },
+    {
+      "commit": "3185094bbc7e9ad9288013f68bb6cde71a94f1e9",
+      "area": "MSYS cmd.exe switch conversion",
+      "result": "Classified foreground shell family through Herdr and applied MSYS2_ARG_CONV_EXCL only for MSYS/Bash before invoking cmd.exe /d /s /c, preserving cmd and PowerShell behavior."
+    }
+  ],
+  "important_live_findings": [
+    "Herdr presentation focus-lock failure is best-effort and was proven non-causal; the flat fallback proceeds to container/task creation.",
+    "Herdr structured pane cwd can remain stale on native Windows after Treehouse changes directory; a dedicated Git-root query is required for validation.",
+    "Git Bash/MSYS can rewrite Windows-style /d /s /c switches into drive-like paths before cmd.exe receives them.",
+    "Starting bash.exe directly from cmd.exe does not guarantee a useful POSIX PATH; launch.sh must establish the minimum Git-Bash tool path itself.",
+    "A manual bin/fm-session-start.sh invocation is not a faithful substitute for Pi's automatic Windows extension path because the automatic path injects FM_NATIVE_HARNESS_PID.",
+    "A clean-room environment materially changed diagnosis quality; reusing failed tasks, Herdr endpoints, locks, and worktrees produced ambiguous pre-metadata timeouts."
+  ],
+  "final_clean_room_result": {
+    "head": "3185094bbc7e9ad9288013f68bb6cde71a94f1e9",
+    "automatic_primary_lock": "pass",
+    "spawn": "timed_out_after_120_seconds",
+    "worktree_created": false,
+    "task_pane_created": false,
+    "metadata_created": false,
+    "launch_script_created": false,
+    "worker_started": false,
+    "brief_delivered": false,
+    "classification": "PHASE1_FAIL_NEW_BLOCKER",
+    "interpretation": "The final clean-room run exposed another independent pre-worktree blocker after the previously identified Windows/MSYS fixes. Per the spike stop rule, no further diagnosis was authorized."
+  },
+  "parked_or_unfinished_items": [
+    {
+      "item": "Final pre-worktree spawn blocker",
+      "status": "unclassified_by_design",
+      "reason": "Stop rule reached: another independent blocker appeared after the last allowed focused fix."
+    },
+    {
+      "item": "Herdr Windows socket canonicalization in teardown",
+      "status": "parked",
+      "reason": "Known mismatch between Windows socket paths and POSIX-only canonicalization. It did not block the measured spawn milestones and was deferred to lifecycle closure."
+    },
+    {
+      "item": "Watcher/recovery robustness",
+      "status": "parked",
+      "reason": "Not allowed to expand the spike unless worker result return became the active North Star blocker."
+    },
+    {
+      "item": "Natural restart/autostart semantics",
+      "status": "parked",
+      "reason": "The native Primary session path was already proven through the Pi extension; restart hardening was not required for the happy-path proof."
+    }
+  ],
+  "decision": {
+    "verdict": "WINDOWS_NATIVE_NORTH_STAR_FAIL_NOT_YET_VIABLE",
+    "meaning": "The accumulated fixes demonstrate that several individual Firstmate layers can operate natively on Windows, but the end-to-end spawn path is not yet deterministic enough for real .NET/WPF work.",
+    "operational_recommendation": "Do not use this branch as a production Windows-native Firstmate environment. Continue real work through the already-proven non-native/compatibility path until Windows support is treated as a dedicated porting and hardening project.",
+    "why_stop": "The spike uncovered a sequence of independent incompatibilities rather than one dominant blocker. After the final allowed focused fix, a new blocker still appeared before worker creation. Continuing would turn the compatibility spike into an open-ended Windows port."
+  },
+  "resume_contract": {
+    "when_to_resume": "Only as an explicit Windows-native porting/hardening project with its own budget and acceptance criteria.",
+    "start_from": "The archived documentation commit that supersedes pre-documentation head 3185094bbc7e9ad9288013f68bb6cde71a94f1e9.",
+    "first_question": "Diagnose the final clean-room pre-worktree timeout before adding any new compatibility layer.",
+    "test_rule": "Use a fresh clone, fresh Firstmate home/state, fresh named Herdr session, and exactly one spawn per hypothesis. Do not reuse failed task/runtime state as a validation bed.",
+    "acceptance_gate": "Do not claim native Windows viability until one clean-room run completes worker creation, brief delivery, a real .NET/WPF edit, native Windows build/tests, result return to Primary, and normal task closure."
+  },
+  "archival": {
+    "archive_branch": "archive/windows-native-spike-20260908",
+    "experimental_branch": "experiment/windows-session-lock-pi",
+    "note": "After this documentation commit, both refs should point at the same final documented snapshot before auxiliary spike branches and local disposable clones are removed."
+  }
+}
